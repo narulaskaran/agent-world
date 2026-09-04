@@ -575,7 +575,7 @@ export function createHandler(deps: HostedDeps) {
               characterId: row.id,
               characterName: row.name,
               summary: `${row.name} arrived in Agent World.`,
-              detail: `First mission: ${parsed.data.firstMission}`,
+              detail: "Arrived.",
               createdAt: now,
             });
             await deps.store.enqueueJob({

@@ -199,10 +199,7 @@ export class WorldEngine {
         characterName: input.name,
         targetCharacterId: null,
         summary: `${input.name} arrived in Agent World.`,
-        detail:
-          input.firstMission === "meet"
-            ? "First mission: meet someone"
-            : "First mission: explore",
+        detail: "Arrived.",
       }),
     );
     this.repository.enqueue({

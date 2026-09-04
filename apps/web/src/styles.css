@@ -319,7 +319,8 @@ select:focus-visible {
 .empty-world p {
   max-width: 440px;
   margin: 0 0 22px;
-  color: #374537;
+  color: #1f2c1f;
+  font-weight: 500;
 }
 .empty-orb {
   width: 66px;
@@ -419,6 +420,9 @@ select:focus-visible {
   cursor: pointer;
   color: #526b5c;
   font-size: 11px;
+  box-sizing: border-box;
+  min-height: 2.75rem;
+  padding-block: 0.75rem;
 }
 .event pre {
   white-space: pre-wrap;

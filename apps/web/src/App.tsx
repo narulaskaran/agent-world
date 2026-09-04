@@ -17,6 +17,7 @@ import {
 import type { Viewer } from "./api";
 import { api, type AdminReport } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
+import { eventDetailsLabel, guestEventDetail } from "./public-record";
 
 const WorldCanvas = lazy(() =>
   import("./game/WorldCanvas").then((module) => ({
@@ -25,6 +26,19 @@ const WorldCanvas = lazy(() =>
 );
 
 type Modal = "create" | "admin" | null;
+
+function useDismissOnEscape(onClose: () => void) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+}
 
 function useWorld() {
   const [snapshot, setSnapshot] = useState<WorldSnapshot | null>(null);
@@ -87,6 +101,7 @@ function CreateModal({
   const [mission, setMission] = useState<"meet" | "explore">("meet");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  useDismissOnEscape(onClose);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -664,6 +679,7 @@ function AuthModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  useDismissOnEscape(onClose);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -800,6 +816,7 @@ function AdminModal({
     alerts?: unknown[];
   } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  useDismissOnEscape(onClose);
   const refreshAdmin = () => {
     void api.admin().then((payload) =>
       setDetails({
@@ -1178,39 +1195,41 @@ export function App() {
           )}
           {recentEvents.length ? (
             <ol className="event-list">
-              {recentEvents.map((item) => (
-                <li key={item.id} className={`event ${item.kind}`}>
-                  <span className="event-symbol">
-                    {item.kind === "conversation"
-                      ? "☵"
-                      : item.kind === "tool"
-                        ? "⌁"
-                        : item.kind === "memory"
-                          ? "✦"
-                          : item.kind === "arrival"
-                            ? "→"
-                            : "·"}
-                  </span>
-                  <div>
-                    <p>{item.summary}</p>
-                    {item.detail &&
-                      !item.detail.startsWith("conversation:") && (
+              {recentEvents.map((item) => {
+                const detail = guestEventDetail(item.detail);
+                return (
+                  <li key={item.id} className={`event ${item.kind}`}>
+                    <span className="event-symbol">
+                      {item.kind === "conversation"
+                        ? "☵"
+                        : item.kind === "tool"
+                          ? "⌁"
+                          : item.kind === "memory"
+                            ? "✦"
+                            : item.kind === "arrival"
+                              ? "→"
+                              : "·"}
+                    </span>
+                    <div>
+                      <p>{item.summary}</p>
+                      {detail && (
                         <details>
-                          <summary aria-label={`See details: ${item.summary}`}>
+                          <summary aria-label={eventDetailsLabel(item.summary)}>
                             See details
                           </summary>
-                          <pre>{item.detail}</pre>
+                          <pre>{detail}</pre>
                         </details>
                       )}
-                    <time>
-                      {new Date(item.createdAt).toLocaleTimeString([], {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </time>
-                  </div>
-                </li>
-              ))}
+                      <time>
+                        {new Date(item.createdAt).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </time>
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <div className="activity-empty">
