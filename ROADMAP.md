@@ -27,10 +27,14 @@ and MPP funding/spending remain later integrations.
   the serverless HTTP driver and a same-origin Auth proxy.
 - The hosted implementation is present: public state reads, authenticated owner
   mutations, admin allowlisting, deterministic persisted jobs/chat/events,
-  polling, and health checks. Production is live on Vercel. A production smoke
-  test passed Neon Auth signup/session, owned character creation, deterministic
-  exploration, an owner directive and persisted response, then cleaned up the
-  temporary character and auth user.
+  polling, health checks, hosted integration tests, stale-job recovery,
+  structured logs, mutation rate limits, event retention, private conversation
+  lines, multiple characters per user, export/import, moderation reports,
+  reputation, persistent artifacts, a workshop location, and a mobile layout.
+  Production is live on Vercel. A production smoke test passed Neon Auth
+  signup/session, owned character creation, deterministic exploration, an owner
+  directive and persisted response, then cleaned up the temporary character and
+  auth user.
 - `agent.narula.xyz` is attached to the Vercel project. DNS still needs the
   Vercel-provided `agent` CNAME applied after the GoDaddy CLI receives its
   `domains.dns:update` OAuth scope.
@@ -56,8 +60,8 @@ and MPP funding/spending remain later integrations.
 - Live MPP calls were proven locally with a dedicated developer-owned MPPX
   account. Normal development and tests use `AGENT_WORLD_LIVE_MPP=false` and
   must not spend funds.
-- Current validation: `pnpm check` passes, including 19 tests, all TypeScript
-  checks, and the production web/server builds.
+- Current validation: `pnpm check` passes, including hosted handler tests, all
+  TypeScript checks, and the production web/server builds.
 
 Runtime data, generated builds, screenshots, dependencies, and `.env` are
 intentionally ignored. A clone starts with a fresh world and no wallet secrets.

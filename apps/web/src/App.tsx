@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { FormEvent } from "react";
 import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
-import { MODEL_OPTIONS, formatUsd } from "@agent-world/shared";
+import { MAX_CHARACTERS_PER_USER, MODEL_OPTIONS, formatUsd } from "@agent-world/shared";
 import type { Viewer } from "./api";
 import { api } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
@@ -218,6 +218,32 @@ function CreateModal({
               {error}
             </p>
           )}
+          <label className="restore-export">
+            Restore from export
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                void file.text().then(async (text) => {
+                  setBusy(true);
+                  setError("");
+                  try {
+                    await api.importCharacter(JSON.parse(text));
+                    onCreated();
+                    onClose();
+                  } catch (caught) {
+                    setError(
+                      caught instanceof Error ? caught.message : String(caught),
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                });
+              }}
+            />
+          </label>
           <button className="primary wide" disabled={busy}>
             {busy ? "Opening the gate…" : "Enter Agent World"}
           </button>
@@ -229,14 +255,14 @@ function CreateModal({
 
 function CharacterInspector({
   character,
-  ownedCharacterId,
+  ownedCharacterIds,
   onClose,
 }: {
   character: PublicCharacter;
-  ownedCharacterId: string | null;
+  ownedCharacterIds: string[];
   onClose: () => void;
 }) {
-  const owned = ownedCharacterId === character.id;
+  const owned = ownedCharacterIds.includes(character.id);
   const [tab, setTab] = useState<"overview" | "memory" | "controls">(
     "overview",
   );
@@ -244,6 +270,9 @@ function CharacterInspector({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [artifactTitle, setArtifactTitle] = useState("A small note");
+  const [artifactBody, setArtifactBody] = useState("");
+  const [reportReason, setReportReason] = useState("");
   const modelLabel =
     MODEL_OPTIONS.find((model) => model.id === character.model)?.label ??
     character.model;
@@ -291,7 +320,11 @@ function CharacterInspector({
               {formatUsd(character.dailyBudgetMicros)}
             </span>
           </div>
-          <p className="model-label">{modelLabel}</p>
+          <p className="model-label">
+            {modelLabel}
+            {character.locationId ? ` · ${character.locationId}` : ""}
+          </p>
+          <p className="model-label">Reputation {character.reputation ?? 0}</p>
         </div>
       </div>
       <div
@@ -326,6 +359,33 @@ function CharacterInspector({
               <h3>Right now</h3>
               <p className="intent-card">{character.intent}</p>
             </section>
+            {!owned && (
+              <section>
+                <h3>Moderation</h3>
+                <textarea
+                  value={reportReason}
+                  onChange={(event) => setReportReason(event.target.value)}
+                  placeholder="Report this character to operators…"
+                  rows={2}
+                  maxLength={500}
+                />
+                <button
+                  className="secondary wide"
+                  disabled={busy || reportReason.trim().length < 4}
+                  onClick={() =>
+                    void perform(async () => {
+                      await api.report({
+                        characterId: character.id,
+                        reason: reportReason.trim(),
+                      });
+                      setReportReason("");
+                    })
+                  }
+                >
+                  Send report
+                </button>
+              </section>
+            )}
             <section>
               <h3>Personality</h3>
               <p>{character.personality}</p>
@@ -374,8 +434,8 @@ function CharacterInspector({
         {tab === "controls" && owned && (
           <div className="inspector-pane" role="tabpanel">
             <section className="owner-panel">
-              <div className="owner-title">
-                <span>Local controls</span>
+              <div className=  "owner-title">
+                <span>Owner controls</span>
                 <span>
                   {formatUsd(
                     character.dailyBudgetMicros - character.spentTodayMicros,
@@ -507,7 +567,57 @@ function CharacterInspector({
                 >
                   New avatar
                 </button>
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void perform(async () => {
+                      const exported = await api.exportCharacter(character.name);
+                      const blob = new Blob([JSON.stringify(exported, null, 2)], {
+                        type: "application/json",
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement("a");
+                      link.href = url;
+                      link.download = `${character.name}.agent.json`;
+                      link.click();
+                      URL.revokeObjectURL(url);
+                    })
+                  }
+                >
+                  Export
+                </button>
               </div>
+              <label>
+                Leave something behind
+                <input
+                  value={artifactTitle}
+                  onChange={(event) => setArtifactTitle(event.target.value)}
+                  maxLength={80}
+                />
+                <textarea
+                  value={artifactBody}
+                  onChange={(event) => setArtifactBody(event.target.value)}
+                  placeholder="A note, sketch, or tiny object for the next visitor…"
+                  rows={2}
+                  maxLength={400}
+                />
+              </label>
+              <button
+                className="secondary wide"
+                disabled={busy || artifactBody.trim().length < 2}
+                onClick={() =>
+                  void perform(async () => {
+                    await api.leaveArtifact(character.name, {
+                      kind: "note",
+                      title: artifactTitle.trim() || "A small note",
+                      body: artifactBody.trim(),
+                    });
+                    setArtifactBody("");
+                  })
+                }
+              >
+                Leave in the world
+              </button>
               <button
                 className="danger-link"
                 onClick={() => {
@@ -666,6 +776,8 @@ function AdminModal({
     queueDepth: number;
     costs: unknown[];
     inFlight: string[];
+    reports?: unknown[];
+    alerts?: unknown[];
   } | null>(null);
   useEffect(() => {
     void api.admin().then(setDetails);
@@ -689,7 +801,7 @@ function AdminModal({
         >
           ×
         </button>
-        <p className="eyebrow">Local controls</p>
+        <p className="eyebrow">Operator controls</p>
         <h2 id="admin-title">World administration</h2>
         <div className="metric-grid">
           <div>
@@ -763,6 +875,41 @@ function AdminModal({
             Reset world
           </button>
         </div>
+        {(details?.reports?.length || details?.alerts?.length) ? (
+          <section className="admin-lists">
+            {details?.alerts?.length ? (
+              <div>
+                <h3>Alerts</h3>
+                <ul>
+                  {details.alerts.slice(0, 6).map((alert) => (
+                    <li key={String((alert as { id?: string }).id)}>
+                      {String((alert as { summary?: string }).summary ?? "")}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {details?.reports?.length ? (
+              <div>
+                <h3>Reports</h3>
+                <ul>
+                  {details.reports.slice(0, 8).map((report) => {
+                    const item = report as {
+                      id?: string;
+                      status?: string;
+                      reason?: string;
+                    };
+                    return (
+                      <li key={String(item.id)}>
+                        {item.status}: {item.reason}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
       </section>
     </div>
   );
@@ -776,14 +923,18 @@ export function App() {
   const selected =
     snapshot?.characters.find((character) => character.id === selectedId) ??
     null;
-  const owner =
-    snapshot?.characters.find(
-      (character) => character.id === viewer?.characterId,
-    ) ?? null;
+  const ownedIds =
+    viewer?.characterIds ??
+    (viewer?.characterId ? [viewer.characterId] : []);
+  const ownedCharacters =
+    snapshot?.characters.filter((character) =>
+      ownedIds.includes(character.id),
+    ) ?? [];
   const recentEvents = useMemo(
     () => snapshot?.events.slice(0, 14) ?? [],
     [snapshot],
   );
+  const artifacts = snapshot?.artifacts ?? [];
   const worldSpendPercent = snapshot
     ? snapshot.serverDailyBudgetMicros > 0
       ? Math.min(
@@ -797,7 +948,8 @@ export function App() {
 
   const openCreate = () => {
     if (!user) setModal("auth");
-    else if (owner) setSelectedId(owner.id);
+    else if (ownedCharacters.length >= MAX_CHARACTERS_PER_USER)
+      setSelectedId(ownedCharacters[0]?.id ?? null);
     else setModal("create");
   };
 
@@ -812,7 +964,7 @@ export function App() {
       <main className="loading">
         <div className="loading-mark">AW</div>
         <h1>Opening Agent World…</h1>
-        <p>Connecting to the local server.</p>
+        <p>Connecting to the shared world.</p>
       </main>
     );
 
@@ -856,17 +1008,19 @@ export function App() {
             <span className="auth-label">Checking session…</span>
           ) : user ? (
             <>
-              {owner ? (
+              {ownedCharacters.map((character) => (
                 <button
+                  key={character.id}
                   className="owner-chip"
-                  onClick={() => setSelectedId(owner.id)}
+                  onClick={() => setSelectedId(character.id)}
                 >
-                  <span style={{ background: owner.avatarColor }} />
-                  {owner.name}
+                  <span style={{ background: character.avatarColor }} />
+                  {character.name}
                 </button>
-              ) : (
+              ))}
+              {ownedCharacters.length < MAX_CHARACTERS_PER_USER && (
                 <button className="primary" onClick={openCreate}>
-                  Create a character
+                  {ownedCharacters.length ? "Add character" : "Create a character"}
                 </button>
               )}
               <button className="secondary auth-user" onClick={() => void signOut()}>
@@ -915,7 +1069,7 @@ export function App() {
             <CharacterInspector
               key={selected.id}
               character={selected}
-              ownedCharacterId={viewer?.characterId ?? null}
+              ownedCharacterIds={ownedIds}
               onClose={() => setSelectedId(null)}
             />
           )}
@@ -928,6 +1082,19 @@ export function App() {
             </div>
             <span className="event-count">latest 100</span>
           </div>
+          {artifacts.length > 0 && (
+            <ul className="artifact-list">
+              {artifacts.slice(0, 6).map((artifact) => (
+                <li key={artifact.id}>
+                  <strong>{artifact.title}</strong>
+                  <span>
+                    {artifact.characterName ?? "someone"} · {artifact.locationId}
+                  </span>
+                  <p>{artifact.body}</p>
+                </li>
+              ))}
+            </ul>
+          )}
           {recentEvents.length ? (
             <ol className="event-list">
               {recentEvents.map((item) => (

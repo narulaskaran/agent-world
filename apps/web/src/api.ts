@@ -1,6 +1,9 @@
 import type {
+  ArtifactInput,
+  CharacterExport,
   CreateCharacterInput,
   DirectiveInput,
+  ReportInput,
   UpdateCharacterInput,
   WorldSnapshot,
 } from "@agent-world/shared";
@@ -13,6 +16,7 @@ export interface Viewer {
   userId: string;
   isAdmin: boolean;
   characterId: string | null;
+  characterIds?: string[];
 }
 
 export interface StateResponse {
@@ -48,20 +52,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   state: async (): Promise<StateResponse> => {
-    const payload = (await request<WorldSnapshot & {
-      viewer?: Viewer | null;
-      snapshot?: WorldSnapshot;
-    }>("/api/state")) as WorldSnapshot & {
+    const payload = (await request<
+      WorldSnapshot & {
+        viewer?: Viewer | null;
+        snapshot?: WorldSnapshot;
+      }
+    >("/api/state")) as WorldSnapshot & {
       viewer?: Viewer | null;
       snapshot?: WorldSnapshot;
     };
     // Accept both the existing flat snapshot and the authenticated envelope
     // so the client can be deployed before/after the API migration.
     if (payload.snapshot) {
-      return { snapshot: payload.snapshot, viewer: payload.viewer };
+      return {
+        snapshot: {
+          ...payload.snapshot,
+          artifacts: payload.snapshot.artifacts ?? [],
+        },
+        viewer: payload.viewer,
+      };
     }
     const { viewer, ...snapshot } = payload;
-    return { snapshot: snapshot as WorldSnapshot, viewer };
+    const world = snapshot as WorldSnapshot;
+    return {
+      snapshot: {
+        ...world,
+        artifacts: world.artifacts ?? [],
+      },
+      viewer,
+    };
   },
   session: () => request<SessionResponse>("/api/auth/session"),
   create: (input: CreateCharacterInput) =>
@@ -85,6 +104,22 @@ export const api = {
     request(`/api/characters/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
+  exportCharacter: (name: string) =>
+    request<CharacterExport>(
+      `/api/characters/${encodeURIComponent(name)}/export`,
+    ),
+  importCharacter: (input: CharacterExport) =>
+    request("/api/characters/import", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  leaveArtifact: (name: string, input: ArtifactInput) =>
+    request(`/api/characters/${encodeURIComponent(name)}/artifacts`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  report: (input: ReportInput) =>
+    request("/api/reports", { method: "POST", body: JSON.stringify(input) }),
   admin: () =>
     request<{
       liveMpp: boolean;
@@ -92,6 +127,8 @@ export const api = {
       costs: unknown[];
       world: Record<string, unknown>;
       inFlight: string[];
+      reports?: unknown[];
+      alerts?: unknown[];
     }>("/api/admin"),
   pauseWorld: (paused: boolean) =>
     request("/api/admin/pause", {
@@ -104,4 +141,9 @@ export const api = {
       body: JSON.stringify({ serverDailyBudgetMicros }),
     }),
   resetWorld: () => request("/api/admin/reset", { method: "POST", body: "{}" }),
+  hideEvent: (eventId: string) =>
+    request(`/api/admin/events/${encodeURIComponent(eventId)}/hide`, {
+      method: "POST",
+      body: "{}",
+    }),
 };

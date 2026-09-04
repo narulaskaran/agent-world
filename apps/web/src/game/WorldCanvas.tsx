@@ -27,6 +27,7 @@ class WorldScene extends Phaser.Scene {
     this.load.svg("world-cafe", "/assets/world/cafe.svg");
     this.load.svg("world-library", "/assets/world/library.svg");
     this.load.svg("world-fountain", "/assets/world/fountain.svg");
+    this.load.svg("world-tree", "/assets/world/tree.svg");
   }
 
   create() {
@@ -123,6 +124,7 @@ class WorldScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.SCREEN);
     this.add.image(24, 418, "world-library").setOrigin(0).setDepth(660);
     this.add.image(497, 243, "world-fountain").setOrigin(0).setDepth(475);
+    this.add.image(790, 430, "world-tree").setOrigin(0).setDepth(640);
 
     this.fountainRings = [0, 1, 2].map((index) =>
       this.add
@@ -137,6 +139,7 @@ class WorldScene extends Phaser.Scene {
     this.addLocationSign(145, 653, "The Memory Stack", 664);
     this.addLocationSign(572, 215, "Sunbeam Plaza", 900);
     this.addLocationSign(875, 76, "Mossbell Park", 900);
+    this.addLocationSign(880, 470, "Tinker Shed", 700);
   }
 
   private addLocationSign(x: number, y: number, label: string, depth: number) {

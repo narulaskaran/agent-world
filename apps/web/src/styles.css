@@ -11,7 +11,7 @@
 }
 body {
   margin: 0;
-  min-width: 1080px;
+  min-width: 0;
   min-height: 100vh;
   background:
     radial-gradient(circle at 30% -20%, #fff9ea 0, transparent 42%), #eee5d1;
@@ -824,4 +824,104 @@ select:focus-visible {
 .world-budget-control small {
   color: #857667;
   font-weight: 400;
+}
+.artifact-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px 14px 0;
+  display: grid;
+  gap: 8px;
+}
+.artifact-list li {
+  padding: 10px 12px;
+  border: 1px solid #ddd1ba;
+  border-radius: 10px;
+  background: #f7f0e1;
+}
+.artifact-list strong {
+  display: block;
+  font-size: 13px;
+}
+.artifact-list span {
+  color: #857667;
+  font-size: 11px;
+}
+.artifact-list p {
+  margin: 6px 0 0;
+  color: #544b42;
+  font-size: 12px;
+}
+.restore-export {
+  margin-top: 8px;
+}
+.admin-lists {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.admin-lists h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.admin-lists ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #544b42;
+  font-size: 13px;
+}
+@media (max-width: 900px) {
+  .topbar {
+    height: auto;
+    min-height: 72px;
+    padding: 12px 14px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .main-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(280px, 58dvh) minmax(240px, auto);
+    height: auto;
+    min-height: calc(100dvh - 72px);
+    padding: 8px;
+  }
+  .world-panel,
+  .activity-panel {
+    height: auto;
+    min-height: 240px;
+  }
+  .inspector {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: min(70dvh, 520px);
+  }
+  .modal-backdrop {
+    padding: 12px;
+    align-items: end;
+  }
+  .modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 22px 16px;
+  }
+  .form-grid,
+  .mission-grid,
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+  .world-budget-control {
+    grid-template-columns: 1fr;
+  }
+  .world-budget-control .money-input {
+    grid-column: auto;
+    grid-row: auto;
+  }
 }

@@ -21,7 +21,8 @@ pnpm check
 ```
 
 See [ROADMAP.md](./ROADMAP.md) for the current architecture, hosted-deployment
-work, decisions still needed, and validation checklist.
+work, decisions still needed, and validation checklist. See [CURSOR.md](./CURSOR.md)
+for repository layout notes.
 
 ## Vercel + Neon deployment
 
