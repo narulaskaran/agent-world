@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="330" height="245" viewBox="0 0 330 245">
+  <defs><filter id="s"><feDropShadow dx="7" dy="8" stdDeviation="3" flood-color="#3e382c" flood-opacity=".35"/></filter></defs>
+  <g filter="url(#s)" stroke="#51372d" stroke-linejoin="round">
+    <path d="M34 78 153 15l143 64-122 70Z" fill="#915d4a" stroke-width="5"/>
+    <path d="m48 79 106-51 126 54-108 55Z" fill="#b97559" stroke-width="3"/>
+    <path d="M41 79v132l133 26V147Z" fill="#c88d6c" stroke-width="4"/>
+    <path d="M174 147v90l113-58V82Z" fill="#a86750" stroke-width="4"/>
+    <path d="M62 108v72l88 17v-70Z" fill="#7ab0a6" stroke-width="4"/>
+    <path d="m72 120 68 13v51l-68-13Z" fill="#d8c18f" stroke-width="2"/>
+    <path d="M82 175v-38m23 42v-38m23 43v-39" stroke="#765446" stroke-width="3"/>
+    <path d="M205 129v72l52-27v-72Z" fill="#573d34" stroke-width="4"/>
+    <path d="m213 136 36-19v24l-36 18Z" fill="#8fc0ba" stroke-width="2"/>
+    <path d="M24 208h139v15H24Z" fill="#7c4c39" stroke-width="3"/>
+    <path d="M273 102h32v49l-32 16Z" fill="#e9d5a2" stroke-width="3"/>
+    <path d="m279 112 20-9v27l-20 10Z" fill="#6b938e" stroke-width="2"/>
+  </g>
+  <g transform="translate(194 27)" stroke="#50392e" stroke-width="3">
+    <ellipse cx="25" cy="29" rx="21" ry="15" fill="#f1e5cc"/>
+    <path d="M43 24c18-7 20 17 2 18" fill="none"/>
+    <path d="M15 12c-7-12 8-12 2-23M28 10c-5-11 10-13 4-24" fill="none" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(15 187)" stroke="#50392e" stroke-width="3">
+    <path d="m0 0 34 6-4 45-28-5Z" fill="#476b52"/>
+    <path d="m7 14 20 3M6 23l19 3M5 32l18 3" stroke="#eadba9" stroke-width="2"/>
+  </g>
+</svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="125" viewBox="0 0 150 125">
+  <defs><filter id="s"><feDropShadow dx="4" dy="7" stdDeviation="3" flood-color="#4a473e" flood-opacity=".35"/></filter></defs>
+  <g filter="url(#s)" stroke="#68675f" stroke-linejoin="round">
+    <ellipse cx="75" cy="93" rx="67" ry="27" fill="#a7a69a" stroke-width="4"/>
+    <ellipse cx="75" cy="86" rx="58" ry="22" fill="#75b7cf" stroke-width="4"/>
+    <ellipse cx="75" cy="83" rx="47" ry="16" fill="#9ad4e1" stroke="#d7e8df" stroke-width="3"/>
+    <path d="M61 72h28l-5 17H66Z" fill="#aaa99d" stroke-width="3"/>
+    <ellipse cx="75" cy="69" rx="29" ry="11" fill="#aaa99d" stroke-width="3"/>
+    <ellipse cx="75" cy="65" rx="23" ry="8" fill="#8bcaDC" stroke="#d7e8df" stroke-width="3"/>
+    <path d="M70 29h10v36H70Z" fill="#aaa99d" stroke-width="3"/>
+    <path d="M75 32c-22 16-20 31-10 34M75 32c22 16 20 31 10 34M75 29c0-13 0-18 0-23" fill="none" stroke="#89d1e7" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
