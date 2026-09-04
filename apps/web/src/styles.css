@@ -301,13 +301,8 @@ select:focus-visible {
 .empty-world {
   position: absolute;
   inset: 43px 0 0;
-  /* Light wash so plaza art stays readable; copy lives on a cream card. */
-  background: linear-gradient(
-    180deg,
-    rgba(48, 70, 50, 0.18) 0%,
-    rgba(48, 70, 50, 0.08) 42%,
-    rgba(48, 70, 50, 0.24) 100%
-  );
+  /* No wash: plaza art stays at full strength. Copy is on a cream card. */
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;
