@@ -2,7 +2,7 @@
 
 ## Layout
 
-- `apps/web`: Vite + React + Phaser client. Same-origin `/api` in production.
+- `apps/web`: Vite + React + Three.js client. Same-origin `/api` in production.
 - `apps/server`: local Fastify + WebSocket runtime (`LocalRuntime` + `WorldEngine`).
 - `packages/shared`: Zod contracts, locations, waypoints, hashing helpers.
 - `packages/db`: SQLite `WorldStore` used by the local server and its tests.
@@ -16,7 +16,7 @@
 
 - Public reads; mutations require a Neon Auth session cookie.
 - Ownership is the auth user id. Users may have up to five characters.
-- Conversation *lines* are private to participants; the fact that people met stays public.
+- Conversation _lines_ are private to participants; the fact that people met stays public.
 - Deterministic jobs live in `character_queue`. Claims use `FOR UPDATE SKIP LOCKED`.
 - Stale `processing` rows are returned to `pending` when their lease (`not_before`) expires.
 - Hobby cron is daily (`/api/jobs/run`). Mutations drain immediately. `GET /api/state`

@@ -1026,7 +1026,8 @@ export function App() {
         )
       : 0
     : 0;
-  const select = useCallback((id: string) => setSelectedId(id), []);
+  const [recordOpen, setRecordOpen] = useState(false);
+  const select = useCallback((id: string | null) => setSelectedId(id), []);
 
   const openCreate = () => {
     if (!user) setModal("auth");
@@ -1173,6 +1174,15 @@ export function App() {
           {snapshot.simulationPaused && (
             <div className="paused-banner">World paused by administrator</div>
           )}
+          <button
+            type="button"
+            className="record-fab"
+            aria-controls="public-record"
+            aria-expanded={recordOpen}
+            onClick={() => setRecordOpen(true)}
+          >
+            Public record
+          </button>
           {selected && (
             <CharacterInspector
               key={selected.id}
@@ -1182,7 +1192,18 @@ export function App() {
             />
           )}
         </section>
-        <aside className="activity-panel">
+        <aside
+          className={`activity-panel${recordOpen ? " sheet-open" : ""}`}
+          id="public-record"
+        >
+          <button
+            type="button"
+            className="icon-button close record-sheet-close"
+            onClick={() => setRecordOpen(false)}
+            aria-label="Close public record"
+          >
+            ×
+          </button>
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Public record</p>
@@ -1281,6 +1302,14 @@ export function App() {
           )}
         </aside>
       </main>
+      {recordOpen && (
+        <button
+          type="button"
+          className="record-sheet-backdrop"
+          aria-label="Dismiss public record"
+          onClick={() => setRecordOpen(false)}
+        />
+      )}
       {modal === "create" && (
         <CreateModal
           onClose={() => setModal(null)}

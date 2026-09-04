@@ -58,10 +58,10 @@ The implementation is primarily in:
 - Production Auth traffic uses `/api/auth/*` as a same-origin proxy. The proxy
   authenticates its server-to-server hop with Neon's own origin so Better Auth
   origin validation succeeds.
-- Phaser is lazy-loaded. This reduced the initial minified bundle from about
-  1.84 MB (506 KB gzip) to 624 KB (170 KB gzip). The associated repository
-  issue was closed after verification.
-- Conversation *lines* are private to participants and admins. The public log
+- The Three.js map is lazy-loaded from `WorldCanvas` so the heavy board bundle
+  stays out of the first paint. The previous Phaser 2D canvas was replaced by a
+  Civ-5-style tilted 3D board (issue #23).
+- Conversation _lines_ are private to participants and admins. The public log
   still records that people met. Owner directive text is not copied into public
   event details.
 - Users may create up to five characters. Names remain globally unique.

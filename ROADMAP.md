@@ -51,7 +51,7 @@ and MPP funding/spending remain later integrations.
 
 ## Confirmed baseline
 
-- pnpm/TypeScript monorepo: React + Phaser web client, Fastify API/WebSocket
+- pnpm/TypeScript monorepo: React + Three.js web client, Fastify API/WebSocket
   server, shared Zod contracts, and Drizzle + SQLite persistence.
 - One authoritative shared world with anonymous spectators, one character per
   local username, autonomous movement, conversations, memories, directives,

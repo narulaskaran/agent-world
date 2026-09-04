@@ -278,25 +278,136 @@ select:focus-visible {
   border-radius: 50%;
 }
 .world-canvas {
+  position: relative;
   width: 100%;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #91b58f;
+  background: #d7c7a4;
+  touch-action: none;
+  overscroll-behavior: none;
 }
-.world-canvas canvas {
-  display: block !important;
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain;
+.world-canvas canvas,
+.world-gl {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+.world-gl.is-panning {
+  cursor: grabbing;
+}
+.world-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.world-labels {
+  position: absolute;
+  inset: 0;
+}
+.location-sign,
+.character-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.location-sign {
+  padding: 5px 10px;
+  border-radius: 5px;
+  background: #5b4333;
+  border: 2px solid #d5b979;
+  color: #fff4d6;
+  font:
+    700 12px "Courier New",
+    monospace;
+  box-shadow: 0 4px 10px rgba(40, 32, 22, 0.28);
+}
+.character-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  white-space: normal;
+}
+.character-label .name-chip,
+.character-label .intent-chip,
+.character-label .state-icon,
+.character-label .sleep-icon {
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.character-label .name-chip {
+  background: #30483ee8;
+  color: #fff8e5;
+}
+.character-label .intent-chip {
+  max-width: 160px;
+  background: #3f4f40d9;
+  color: #fff9e8;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+}
+.character-label .speech-bubble {
+  max-width: 190px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: #fff8e9ed;
+  color: #241f1b;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 4px 10px rgba(40, 32, 22, 0.16);
+}
+.character-label .state-icon {
+  background: #4b654fcc;
+  color: #fff7dc;
+  font-family: "Courier New", monospace;
+}
+.character-label .sleep-icon {
+  color: #344988;
+  font:
+    700 14px "Courier New",
+    monospace;
+  background: transparent;
+}
+.camera-reset {
+  pointer-events: auto;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  padding: 7px 10px;
+  border: 1px solid #c8baa0;
+  border-radius: 8px;
+  background: #fff8e9ee;
+  color: #3d4f43;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(55, 42, 29, 0.12);
+}
+.camera-reset:hover {
+  background: #fffdf7;
 }
 .world-loading {
   flex: 1;
   display: grid;
   place-items: center;
-  background: #91b58f;
+  background: #d7c7a4;
   color: #304638;
   font-weight: 700;
+}
+.record-fab,
+.record-sheet-close,
+.record-sheet-backdrop {
+  display: none;
 }
 .empty-world {
   position: absolute;
@@ -310,6 +421,7 @@ select:focus-visible {
   text-align: center;
   z-index: 10;
   padding: 24px;
+  pointer-events: none;
 }
 .empty-world-copy {
   width: min(28rem, 100%);
@@ -321,6 +433,7 @@ select:focus-visible {
   background: #fff9ed;
   border: 1px solid #c3b394;
   box-shadow: 0 12px 32px rgba(32, 44, 32, 0.22);
+  pointer-events: auto;
 }
 .empty-world h2 {
   margin: 12px 0 6px;
@@ -999,15 +1112,64 @@ select:focus-visible {
   }
   .main-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(280px, 58dvh) minmax(240px, auto);
-    height: auto;
-    min-height: calc(100dvh - 56px);
+    grid-template-rows: 1fr;
+    height: calc(100dvh - 56px);
+    min-height: 0;
     padding: 8px;
   }
-  .world-panel,
+  .world-panel {
+    height: 100%;
+    min-height: 0;
+  }
   .activity-panel {
-    height: auto;
-    min-height: 240px;
+    display: none;
+  }
+  .activity-panel.sheet-open {
+    display: flex;
+    position: fixed;
+    z-index: 40;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    height: min(68dvh, 560px);
+    max-height: calc(100dvh - 72px);
+  }
+  .record-sheet-close {
+    display: grid;
+  }
+  .record-sheet-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    border: 0;
+    padding: 0;
+    background: rgba(39, 34, 28, 0.32);
+  }
+  .record-fab {
+    display: flex;
+    position: absolute;
+    z-index: 20;
+    right: 12px;
+    bottom: 12px;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    border: 1px solid #c8baa0;
+    border-radius: 999px;
+    background: #fff8e9ee;
+    color: #3d4f43;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(55, 42, 29, 0.18);
+  }
+  .record-fab[aria-expanded="true"] {
+    display: none;
+  }
+  .world-panel:has(.inspector) .record-fab {
+    bottom: auto;
+    top: 56px;
   }
   .world-meta {
     gap: 8px;
