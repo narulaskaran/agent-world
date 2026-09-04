@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CreateCharacterSchema, nameColor } from "./index.js";
+import { CreateCharacterSchema, hashString, locationAtPoint, nameColor } from "./index.js";
 
 describe("shared contracts", () => {
   it("accepts the intended character creation shape", () => {
@@ -28,8 +28,10 @@ describe("shared contracts", () => {
     ).toBe(false);
   });
 
-  it("generates stable fallback colors", () => {
-    expect(nameColor("Moss")).toBe(nameColor("Moss"));
-    expect(nameColor("Moss")).not.toBe(nameColor("Juniper"));
+  it("hashes stably and finds plaza and workshop locations", () => {
+    expect(hashString("Moss")).toBe(hashString("Moss"));
+    expect(hashString("Moss")).not.toBe(hashString("Juniper"));
+    expect(locationAtPoint(455, 275)?.id).toBe("plaza");
+    expect(locationAtPoint(880, 520)?.id).toBe("workshop");
   });
 });

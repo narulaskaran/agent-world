@@ -6,6 +6,7 @@ import type {
   WorldSnapshot,
 } from "@agent-world/shared";
 import {
+  LOCATION_WAYPOINTS,
   WORLD_HEIGHT,
   WORLD_LOCATIONS,
   WORLD_WIDTH,
@@ -32,31 +33,6 @@ const CHARACTER_BOUNDS = {
   top: 90,
   bottom: WORLD_HEIGHT - 90,
 };
-const LOCATION_WAYPOINTS: Record<string, Array<{ x: number; y: number }>> = {
-  plaza: [
-    { x: 455, y: 275 },
-    { x: 690, y: 275 },
-    { x: 455, y: 420 },
-    { x: 690, y: 420 },
-  ],
-  cafe: [
-    { x: 300, y: 300 },
-    { x: 382, y: 245 },
-    { x: 365, y: 345 },
-  ],
-  park: [
-    { x: 790, y: 245 },
-    { x: 900, y: 285 },
-    { x: 960, y: 385 },
-    { x: 820, y: 390 },
-  ],
-  library: [
-    { x: 370, y: 595 },
-    { x: 310, y: 605 },
-    { x: 470, y: 610 },
-  ],
-};
-
 const clampPosition = (position: { x: number; y: number }) => ({
   x: Math.max(
     CHARACTER_BOUNDS.left,
@@ -167,6 +143,7 @@ export class WorldEngine {
       characters: this.repository.listPublicCharacters(),
       events: this.repository.listEvents(),
       locations: WORLD_LOCATIONS,
+      artifacts: [],
       simulationPaused: state.simulationPaused,
       serverSpentTodayMicros: state.serverSpentTodayMicros,
       serverDailyBudgetMicros: state.serverDailyBudgetMicros,

@@ -15,5 +15,10 @@
       "path": "/api/jobs/run",
       "schedule": "0 0 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60
+    }
+  }
 }

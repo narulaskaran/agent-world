@@ -75,6 +75,55 @@ export const DirectiveSchema = z.object({
 });
 export type DirectiveInput = z.infer<typeof DirectiveSchema>;
 
+export const ReportSchema = z
+  .object({
+    reason: z.string().trim().min(4).max(500),
+    characterId: z.string().trim().min(1).max(80).optional(),
+    eventId: z.string().trim().min(1).max(80).optional(),
+  })
+  .refine((value) => Boolean(value.characterId || value.eventId), {
+    message: "Report a character or an event",
+  });
+export type ReportInput = z.infer<typeof ReportSchema>;
+
+export const ArtifactSchema = z.object({
+  kind: z.enum(["note", "object"]).default("note"),
+  title: z.string().trim().min(2).max(80),
+  body: z.string().trim().min(2).max(400),
+});
+export type ArtifactInput = z.infer<typeof ArtifactSchema>;
+
+export const CharacterExportSchema = z.object({
+  version: z.literal(1),
+  name: z
+    .string()
+    .trim()
+    .min(2)
+    .max(24)
+    .regex(
+      /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/,
+      "Use letters, numbers, spaces, _ or -",
+    ),
+  personality: z.string().trim().min(10).max(800),
+  model: z.enum(
+    MODEL_OPTIONS.map((model) => model.id) as [string, ...string[]],
+  ),
+  memories: z
+    .array(
+      z.object({
+        kind: z.enum(["fact", "impression"]),
+        bullet: z.string().trim().min(1).max(400),
+        subject: z.string().trim().max(80).nullable().optional(),
+        confidence: z.number().min(0).max(1).optional(),
+      }),
+    )
+    .max(50)
+    .default([]),
+});
+export type CharacterExport = z.infer<typeof CharacterExportSchema>;
+
+export const MAX_CHARACTERS_PER_USER = 5;
+
 export interface PublicMemory {
   id: string;
   kind: "fact" | "impression";
@@ -109,6 +158,8 @@ export interface PublicCharacter {
   avatarUrl: string | null;
   avatarColor: string;
   toolActive: boolean;
+  reputation: number;
+  locationId: WorldLocationId | null;
   memories: PublicMemory[];
   relationships: PublicRelationship[];
   updatedAt: number;
@@ -131,11 +182,19 @@ export interface WorldEvent {
   targetCharacterId: string | null;
   summary: string;
   detail: string | null;
+  visibility?: "public" | "private";
   createdAt: number;
 }
 
+export type WorldLocationId =
+  | "plaza"
+  | "cafe"
+  | "park"
+  | "library"
+  | "workshop";
+
 export interface WorldLocation {
-  id: "plaza" | "cafe" | "park" | "library";
+  id: WorldLocationId;
   name: string;
   description: string;
   x: number;
@@ -143,6 +202,19 @@ export interface WorldLocation {
   width: number;
   height: number;
   color: string;
+}
+
+export interface WorldArtifact {
+  id: string;
+  locationId: WorldLocationId;
+  characterId: string | null;
+  characterName: string | null;
+  kind: "note" | "object";
+  title: string;
+  body: string;
+  x: number;
+  y: number;
+  createdAt: number;
 }
 
 export const WORLD_WIDTH = 1120;
@@ -189,12 +261,75 @@ export const WORLD_LOCATIONS: WorldLocation[] = [
     height: 190,
     color: "#8a87ad",
   },
+  {
+    id: "workshop",
+    name: "Tinker Shed",
+    description: "A dusty shed for making and leaving things behind.",
+    x: 760,
+    y: 450,
+    width: 300,
+    height: 190,
+    color: "#b08968",
+  },
 ];
+
+export const LOCATION_WAYPOINTS: Record<
+  WorldLocationId,
+  Array<{ x: number; y: number }>
+> = {
+  plaza: [
+    { x: 455, y: 275 },
+    { x: 690, y: 275 },
+    { x: 455, y: 420 },
+    { x: 690, y: 420 },
+  ],
+  cafe: [
+    { x: 190, y: 180 },
+    { x: 300, y: 300 },
+    { x: 382, y: 245 },
+  ],
+  park: [
+    { x: 900, y: 180 },
+    { x: 790, y: 245 },
+    { x: 960, y: 385 },
+  ],
+  library: [
+    { x: 220, y: 540 },
+    { x: 370, y: 595 },
+    { x: 310, y: 605 },
+  ],
+  workshop: [
+    { x: 880, y: 520 },
+    { x: 820, y: 560 },
+    { x: 940, y: 560 },
+  ],
+};
+
+export function hashString(value: string): number {
+  let result = 0;
+  for (const character of value)
+    result = (result * 31 + character.charCodeAt(0)) | 0;
+  return Math.abs(result);
+}
+
+export function locationAtPoint(
+  x: number,
+  y: number,
+): WorldLocation | undefined {
+  return WORLD_LOCATIONS.find(
+    (location) =>
+      x >= location.x &&
+      x <= location.x + location.width &&
+      y >= location.y &&
+      y <= location.y + location.height,
+  );
+}
 
 export interface WorldSnapshot {
   characters: PublicCharacter[];
   events: WorldEvent[];
   locations: WorldLocation[];
+  artifacts: WorldArtifact[];
   simulationPaused: boolean;
   serverSpentTodayMicros: number;
   serverDailyBudgetMicros: number;

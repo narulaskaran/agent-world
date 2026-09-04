@@ -677,6 +677,11 @@ export class WorldRepository {
         avatarUrl: row.avatarUrl,
         avatarColor: row.avatarColor,
         toolActive: row.toolActive,
+        reputation: publicRelationships.reduce(
+          (sum, relationship) => sum + relationship.affinity,
+          0,
+        ),
+        locationId: null,
         memories: publicMemories,
         relationships: publicRelationships,
         updatedAt: row.updatedAt,
