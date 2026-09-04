@@ -1,12 +1,17 @@
 import { createAuthClient } from "@neondatabase/neon-js/auth";
 import { BetterAuthReactAdapter } from "@neondatabase/neon-js/auth/react/adapters";
 
-// In production Vercel can proxy /api/auth to Neon Auth. Supplying
-// VITE_NEON_AUTH_URL is useful when the hosted Auth URL is exposed directly.
-export const NEON_AUTH_URL =
-  import.meta.env.DEV && import.meta.env.VITE_NEON_AUTH_URL
-    ? import.meta.env.VITE_NEON_AUTH_URL
-    : "/api/auth";
+function authBaseUrl(): string {
+  if (import.meta.env.DEV && import.meta.env.VITE_NEON_AUTH_URL)
+    return import.meta.env.VITE_NEON_AUTH_URL;
+  if (typeof window !== "undefined" && window.location?.origin)
+    return `${window.location.origin}/api/auth`;
+  return "/api/auth";
+}
+
+// In production Vercel proxies /api/auth to Neon Auth. Better Auth requires an
+// absolute base URL, so the browser origin is prefixed onto the same-origin path.
+export const NEON_AUTH_URL = authBaseUrl();
 
 export const authClient = createAuthClient(NEON_AUTH_URL, {
   adapter: BetterAuthReactAdapter(),
