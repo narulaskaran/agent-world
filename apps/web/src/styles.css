@@ -301,17 +301,30 @@ select:focus-visible {
 .empty-world {
   position: absolute;
   inset: 43px 0 0;
-  background: rgba(125, 157, 120, 0.9);
+  /* No wash: plaza art stays at full strength. Copy is on a cream card. */
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
   z-index: 10;
-  backdrop-filter: blur(3px);
+  padding: 24px;
+}
+.empty-world-copy {
+  width: min(28rem, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 22px 26px 26px;
+  border-radius: 16px;
+  background: #fff9ed;
+  border: 1px solid #c3b394;
+  box-shadow: 0 12px 32px rgba(32, 44, 32, 0.22);
 }
 .empty-world h2 {
   margin: 12px 0 6px;
+  color: #1f2c1f;
   font:
     34px "DM Serif Display",
     serif;
@@ -354,10 +367,11 @@ select:focus-visible {
   flex-direction: column;
 }
 .panel-heading {
-  padding: 18px;
+  padding: 12px 14px;
   display: flex;
   justify-content: space-between;
   border-bottom: 1px solid #ddd1ba;
+  flex-shrink: 0;
 }
 .panel-heading h2 {
   margin: 1px 0 0;
@@ -387,15 +401,26 @@ select:focus-visible {
 .event-list {
   list-style: none;
   margin: 0;
-  padding: 0 14px 22px;
+  padding: 0 14px 12px;
   overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 .event {
   display: grid;
   grid-template-columns: 27px 1fr;
   gap: 8px;
-  padding: 14px 3px;
+  padding: 6px 2px;
   border-bottom: 1px dashed #ded2bd;
+}
+.event-copy {
+  min-width: 0;
+}
+.event-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 .event-symbol {
   width: 24px;
@@ -408,11 +433,13 @@ select:focus-visible {
   font-weight: 800;
 }
 .event p {
-  margin: 1px 0 5px;
+  margin: 0;
+  min-width: 0;
   font-size: 13px;
   line-height: 1.35;
 }
 .event time {
+  flex-shrink: 0;
   color: #53483e;
   font-size: 0.875rem;
 }
@@ -843,14 +870,15 @@ select:focus-visible {
 .artifact-list {
   list-style: none;
   margin: 0;
-  padding: 12px 14px 0;
+  padding: 8px 14px 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .artifact-list li {
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: 1px solid #ddd1ba;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #f7f0e1;
 }
 .artifact-list strong {

@@ -17,7 +17,13 @@ import {
 import type { Viewer } from "./api";
 import { api, type AdminReport } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
-import { eventDetailsLabel, guestEventDetail } from "./public-record";
+import {
+  PUBLIC_RECORD_LIMIT,
+  eventDetailsLabel,
+  guestEventDetail,
+  shortDisplayId,
+  shortenFeedSummary,
+} from "./public-record";
 
 const WorldCanvas = lazy(() =>
   import("./game/WorldCanvas").then((module) => ({
@@ -1007,7 +1013,7 @@ export function App() {
       ownedIds.includes(character.id),
     ) ?? [];
   const recentEvents = useMemo(
-    () => snapshot?.events.slice(0, 14) ?? [],
+    () => snapshot?.events.slice(0, PUBLIC_RECORD_LIMIT) ?? [],
     [snapshot],
   );
   const artifacts = snapshot?.artifacts ?? [];
@@ -1141,22 +1147,27 @@ export function App() {
           </Suspense>
           {!snapshot.characters.length && (
             <div className="empty-world">
-              <div className="empty-orb">✦</div>
-              <h2>The world is quiet—for now.</h2>
-              <p>
-                {snapshot.inviteOnly
-                  ? "Watch the plaza while invites are closed. Operators will open character creation when the world is ready."
-                  : "Be the first character to step into Sunbeam Plaza. Anyone else on this server will see you arrive."}
-              </p>
-              {snapshot.inviteOnly && !user ? (
-                <button className="secondary" onClick={() => setModal("auth")}>
-                  Sign in
-                </button>
-              ) : (
-                <button className="primary" onClick={openCreate}>
-                  Create the first character
-                </button>
-              )}
+              <div className="empty-world-copy">
+                <div className="empty-orb">✦</div>
+                <h2>The world is quiet—for now.</h2>
+                <p>
+                  {snapshot.inviteOnly
+                    ? "Watch the plaza while invites are closed. Operators will open character creation when the world is ready."
+                    : "Be the first character to step into Sunbeam Plaza. Anyone else on this server will see you arrive."}
+                </p>
+                {snapshot.inviteOnly && !user ? (
+                  <button
+                    className="secondary"
+                    onClick={() => setModal("auth")}
+                  >
+                    Sign in
+                  </button>
+                ) : (
+                  <button className="primary" onClick={openCreate}>
+                    Create the first character
+                  </button>
+                )}
+              </div>
             </div>
           )}
           {snapshot.simulationPaused && (
@@ -1181,22 +1192,35 @@ export function App() {
           </div>
           {artifacts.length > 0 && (
             <ul className="artifact-list">
-              {artifacts.slice(0, 6).map((artifact) => (
-                <li key={artifact.id}>
-                  <strong>{artifact.title}</strong>
-                  <span>
-                    {artifact.characterName ?? "someone"} ·{" "}
-                    {artifact.locationId}
-                  </span>
-                  <p>{artifact.body}</p>
-                </li>
-              ))}
+              {artifacts.slice(0, 6).map((artifact) => {
+                const actor = artifact.characterName ?? "someone";
+                const actorShort = shortDisplayId(actor);
+                const displayTitle = shortenFeedSummary(artifact.title);
+                return (
+                  <li key={artifact.id}>
+                    <strong
+                      title={
+                        displayTitle !== artifact.title
+                          ? artifact.title
+                          : undefined
+                      }
+                    >
+                      {displayTitle}
+                    </strong>
+                    <span title={actor !== actorShort ? actor : undefined}>
+                      {actorShort} · {artifact.locationId}
+                    </span>
+                    <p>{artifact.body}</p>
+                  </li>
+                );
+              })}
             </ul>
           )}
           {recentEvents.length ? (
             <ol className="event-list">
               {recentEvents.map((item) => {
                 const detail = guestEventDetail(item.detail);
+                const displaySummary = shortenFeedSummary(item.summary);
                 return (
                   <li key={item.id} className={`event ${item.kind}`}>
                     <span className="event-symbol">
@@ -1210,22 +1234,37 @@ export function App() {
                               ? "→"
                               : "·"}
                     </span>
-                    <div>
-                      <p>{item.summary}</p>
+                    <div className="event-copy">
+                      <div className="event-headline">
+                        <p
+                          title={
+                            displaySummary !== item.summary
+                              ? item.summary
+                              : undefined
+                          }
+                        >
+                          {displaySummary}
+                        </p>
+                        <time>
+                          {new Date(item.createdAt).toLocaleTimeString([], {
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </time>
+                      </div>
                       {detail && (
                         <details>
-                          <summary aria-label={eventDetailsLabel(item.summary)}>
+                          <summary
+                            aria-label={eventDetailsLabel(item.summary, {
+                              createdAt: item.createdAt,
+                              id: item.id,
+                            })}
+                          >
                             See details
                           </summary>
                           <pre>{detail}</pre>
                         </details>
                       )}
-                      <time>
-                        {new Date(item.createdAt).toLocaleTimeString([], {
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
-                      </time>
                     </div>
                   </li>
                 );
