@@ -186,7 +186,9 @@ describe("WorldRepository", () => {
   });
 
   it("recovers expired character and queue leases without letting stale workers release a new lease", () => {
-    const firstLease = repository.claimCharacter("moss", 1);
+    // Keep the held lease well above 1ms so a slow CI tick cannot expire it
+    // before the "still claimed" assertion.
+    const firstLease = repository.claimCharacter("moss", 60_000);
     expect(firstLease).toBeTruthy();
     expect(repository.claimCharacter("moss")).toBeNull();
     repository.sqlite
