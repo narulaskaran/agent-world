@@ -25,8 +25,12 @@ The implementation is primarily in:
 - `apps/web/src/auth.ts`, `apps/web/src/api.ts`, and `apps/web/src/App.tsx`:
   Neon Auth, session-derived ownership, polling, and authenticated controls.
 - `vercel.json`: monorepo build, API rewrite, daily Hobby-compatible cron.
-- `.github/workflows/hosted-ticks.yml`: every-10-minute unattended ticks
-  (`/api/jobs/run` when `CRON_SECRET` is set, otherwise spectator `/api/state`).
+- Upstash QStash marketplace integration (`upstash-qstash-sky-ferry`, schedule
+  `scd_7Bh9SNqWXfhxev2WiSYTGQ5CwNxb`): every-10-minute authenticated
+  `GET /api/jobs/run` (`Authorization: Bearer $CRON_SECRET`), independent of
+  Vercel Hobby's daily-cron limit. Manage it in the Upstash console or via
+  `QSTASH_TOKEN` (a Vercel-provisioned Production env var) against
+  `https://qstash.upstash.io/v2/schedules`.
 - `.github/workflows/check.yml`: `pnpm check`, with live Neon SKIP LOCKED when a
   test database URL is available (secret or disposable neon.new).
 - `.github/dependabot.yml` and `.github/workflows/dependabot-auto-merge.yml`:
@@ -43,10 +47,12 @@ The implementation is primarily in:
 - Vercel Hobby rejected an every-minute cron. Character creation and owner
   directives drain ready deterministic work immediately; `GET /api/state`
   schedules due ticks and awaits a short drain when characters or jobs are due,
-  so a watched world keeps moving between cron runs. GitHub Actions
-  `.github/workflows/hosted-ticks.yml` hits production every 10 minutes. Daily
-  Hobby cron remains the backup. Authenticated `/api/jobs/run` still needs the
-  Vercel `CRON_SECRET` copied into GitHub Actions secrets.
+  so a watched world keeps moving between cron runs. Upstash QStash (see
+  above) hits production every 10 minutes with the authenticated
+  `CRON_SECRET`. Daily Hobby cron remains the backup. An earlier GitHub
+  Actions workflow (`hosted-ticks.yml`) did the same job but was removed in
+  favor of QStash to avoid two independent triggers on the same 10-minute
+  cadence.
 - Production Auth traffic uses `/api/auth/*` as a same-origin proxy. The proxy
   authenticates its server-to-server hop with Neon's own origin so Better Auth
   origin validation succeeds.
@@ -69,11 +75,10 @@ The implementation is primarily in:
 
 ## Remaining work
 
-1. Copy Vercel Production `CRON_SECRET` into GitHub Actions as `CRON_SECRET` or
-   `AGENT_WORLD_CRON_SECRET` so `.github/workflows/hosted-ticks.yml` can call
-   `/api/jobs/run`. Until then it falls back to spectator `GET /api/state`.
-   Optional: `AGENT_WORLD_PRODUCTION_URL`. This environment cannot write Actions
-   secrets (HTTP 403).
+1. `AGENT_WORLD_ADMIN_USER_IDS` is still unset in Vercel; no user has signed up
+   for real yet (only leftover `aw-smoke-*@example.com` rows in
+   `neon_auth.user`). Sign up, then set that env var to the resulting user ID
+   and redeploy.
 2. Optional: set GitHub Actions secret `AGENT_WORLD_NEON_TEST_URL` to a
    disposable Neon branch. `.github/workflows/check.yml` already runs the live
    SKIP LOCKED test when that secret exists, and otherwise tries neon.new before
