@@ -21,6 +21,10 @@ Production verification completed successfully:
   owner directive, and received a persisted deterministic response/event.
 - The smoke character, auth user, and related events were removed afterward.
 - `pnpm check` passes: 28 tests, all workspace typechecks, and production builds.
+- `.github/dependabot.yml` and `.github/workflows/dependabot-auto-merge.yml` are
+  on `main`. Patch and minor Dependabot PRs auto-merge except the
+  `neon-and-drizzle` group and any update whose dependency names include
+  `drizzle` or `neondatabase`.
 
 The implementation is primarily in:
 
@@ -31,6 +35,8 @@ The implementation is primarily in:
 - `apps/web/src/auth.ts`, `apps/web/src/api.ts`, and `apps/web/src/App.tsx`:
   Neon Auth, session-derived ownership, polling, and authenticated controls.
 - `vercel.json`: monorepo build, API rewrite, and daily Hobby-compatible cron.
+- `.github/dependabot.yml` and `.github/workflows/dependabot-auto-merge.yml`:
+  weekly npm Dependabot groups plus squash auto-merge for low-risk updates.
 - `ROADMAP.md`: architecture, findings, validation state, and later milestones.
 
 ## Important design decisions
@@ -54,22 +60,15 @@ The implementation is primarily in:
 
 ## Remaining work
 
-1. Push `.github/workflows/dependabot-auto-merge.yml`. It is prepared locally,
-   but the current GitHub CLI credential cannot modify workflow files. Grant
-   the credential workflow-write permission, then commit and push the file.
-   `.github/dependabot.yml` is already on `main`.
-2. `agent.narula.xyz` is attached to the Vercel project, but DNS was explicitly
-   deferred. Vercel currently recommends a CNAME for host `agent`; inspect the
-   domain again before writing the record because provider targets can change.
-3. Add hosted integration tests for cross-user ownership, admin boundaries,
+1. Add hosted integration tests for cross-user ownership, admin boundaries,
    concurrent queue claims, stale job recovery, and Postgres transaction
    semantics. The production smoke covered one authenticated user, not the full
    adversarial matrix.
-4. Replace request-coupled deterministic draining with a durable scheduler or
+2. Replace request-coupled deterministic draining with a durable scheduler or
    queue if disconnected autonomy needs a cadence faster than daily.
-5. Add structured error reporting, rate limits, event retention, and operator
+3. Add structured error reporting, rate limits, event retention, and operator
    alerts before opening signup broadly.
-6. Follow `ROADMAP.md` for OpenRouter, then Privy + Stripe Crypto Onramp + MPP.
+4. Follow `ROADMAP.md` for OpenRouter, then Privy + Stripe Crypto Onramp + MPP.
    Do not enable paid calls in CI or ordinary preview deployments.
 
 ## Useful continuation commands
@@ -80,7 +79,6 @@ git status --short --branch
 vercel project inspect agent-world
 vercel ls agent-world
 curl -fsS https://agent-world-lovat.vercel.app/api/health
-vercel domains verify agent.narula.xyz
 gh issue list --state open
 ```
 
