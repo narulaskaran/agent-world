@@ -4,7 +4,7 @@ import {
   hashString,
   locationAtPoint,
   type WorldLocationId,
-} from "@agent-world/shared";
+} from "../../shared/src/index.js";
 import { logEvent } from "./logging.js";
 import type { CharacterRow, HostedStore, QueueJob } from "./store.js";
 

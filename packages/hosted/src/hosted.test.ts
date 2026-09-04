@@ -5,7 +5,7 @@ import {
   ReportSchema,
   hashString,
   locationAtPoint,
-} from "@agent-world/shared";
+} from "../../shared/src/index.js";
 import { createHandler, isAdmin, parseEnv } from "./handler.js";
 import { executeJob, runAutonomy } from "./jobs.js";
 import { MemoryStore } from "./memory-store.js";

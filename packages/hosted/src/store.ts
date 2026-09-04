@@ -1,4 +1,4 @@
-import type { WorldArtifact, WorldLocationId } from "@agent-world/shared";
+import type { WorldArtifact, WorldLocationId } from "../../shared/src/index.js";
 
 export interface CharacterRow {
   id: string;

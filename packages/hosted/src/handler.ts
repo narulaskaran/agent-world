@@ -13,7 +13,7 @@ import {
   nameColor,
   type CharacterState,
   type WorldSnapshot,
-} from "@agent-world/shared";
+} from "../../shared/src/index.js";
 import { ConflictError, HttpError } from "./errors.js";
 import { logEvent, postOperatorAlert, type LogEvent } from "./logging.js";
 import { addPublicEvent, runAutonomy, type AutonomyOptions } from "./jobs.js";

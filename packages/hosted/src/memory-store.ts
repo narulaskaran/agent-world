@@ -1,4 +1,4 @@
-import type { WorldArtifact } from "@agent-world/shared";
+import type { WorldArtifact } from "../../shared/src/index.js";
 import { ConflictError } from "./errors.js";
 import type {
   AlertRow,

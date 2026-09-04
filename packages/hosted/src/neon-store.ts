@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { WorldArtifact, WorldLocationId } from "@agent-world/shared";
+import type { WorldArtifact, WorldLocationId } from "../../shared/src/index.js";
 import { ConflictError } from "./errors.js";
 import type {
   AlertRow,
