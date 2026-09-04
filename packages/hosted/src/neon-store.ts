@@ -166,9 +166,11 @@ export class NeonStore implements HostedStore {
 
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
     const sql = this.sql();
-    const begin = sql.begin ?? sql.transaction;
-    if (begin) {
-      return begin.call(sql, async (txn: NeonSql) => this.context.run(txn, fn)) as Promise<T>;
+    // neon()'s HTTP `transaction()` is a batch of queries (array, or a function
+    // that returns an array). It is not an interactive BEGIN callback. Only
+    // `begin` supports running arbitrary store methods inside a txn.
+    if (typeof sql.begin === "function") {
+      return sql.begin(async (txn: NeonSql) => this.context.run(txn, fn));
     }
     return fn();
   }

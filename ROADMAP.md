@@ -19,7 +19,8 @@ and MPP funding/spending remain later integrations.
   `/api/jobs/run` daily. Vercel Hobby rejected the original every-minute cron;
   ready work is drained after character creation and owner directives, and
   `GET /api/state` schedules due ticks then awaits a short drain so a watched
-  world keeps moving between cron runs.
+  world keeps moving between cron runs. `.github/workflows/hosted-ticks.yml`
+  repeats unattended ticks every 10 minutes without a Vercel Pro plan.
 - Vercel Cron invokes that path with an HTTP GET and authenticates it with a
   `CRON_SECRET` Bearer header. The hosted handler rejects missing or mismatched
   secrets.
@@ -34,11 +35,9 @@ and MPP funding/spending remain later integrations.
   lines, multiple characters per user, export/import, moderation reports,
   reputation, persistent artifacts, a workshop location, a mobile layout,
   movement segments, spectator presence counts, and an optional invite-only
-  creation gate. A live Neon SKIP LOCKED test runs when a disposable
-  `DATABASE_URL` is provided. Production is live on Vercel. A production smoke
-  test passed Neon Auth signup/session, owned character creation, deterministic
-  exploration, an owner directive and persisted response, then cleaned up the
-  temporary character and auth user.
+  creation gate. A live Neon SKIP LOCKED test runs in CI when
+  `AGENT_WORLD_NEON_TEST_URL` is set, or when the workflow can provision a
+  disposable neon.new database. Production is live on Vercel.
 - `agent.narula.xyz` is attached to the Vercel project. DNS still needs the
   Vercel-provided `agent` CNAME applied after the GoDaddy CLI receives its
   `domains.dns:update` OAuth scope.

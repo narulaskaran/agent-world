@@ -32,7 +32,10 @@ the workspace with the lockfile, builds `@agent-world/web`, serves
 `apps/web/dist`, and schedules the durable worker endpoint at
 `/api/jobs/run` daily for maintenance. Character creation and owner directives
 also drain ready deterministic jobs in the originating request, so the first
-hosted flow works immediately on Vercel Hobby. Vercel invokes Cron
+hosted flow works immediately on Vercel Hobby. GitHub Actions
+`.github/workflows/hosted-ticks.yml` calls the same production endpoint every
+10 minutes (authenticated with `CRON_SECRET` when that Actions secret is set,
+otherwise via spectator `GET /api/state`). Vercel invokes Cron
 Jobs only on the production deployment and sends the `CRON_SECRET` as a Bearer
 authorization header; the handler must reject missing or mismatched secrets.
 See Vercel's [static configuration](https://vercel.com/docs/project-configuration/vercel-json),

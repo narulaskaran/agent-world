@@ -7,6 +7,8 @@ import { NeonStore, type NeonSql } from "./neon-store.js";
 
 const databaseUrl =
   process.env.AGENT_WORLD_NEON_TEST_URL ?? process.env.DATABASE_URL;
+// CI sets AGENT_WORLD_NEON_TEST_URL from a repo secret or a disposable neon.new
+// database. Without either, this file stays skipped rather than failing check.
 const describeNeon = databaseUrl ? describe : describe.skip;
 
 const applySqlFile = async (sql: NeonSql, fileName: string) => {

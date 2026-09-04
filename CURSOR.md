@@ -10,6 +10,8 @@
 - `api/index.ts`: Vercel Function entry that re-exports `createProductionHandler()`.
 - `db/migrations`: checked-in Postgres SQL. `0002_hosted.sql` is also applied at
   runtime by `NeonStore.ensureSchema()`.
+- `.github/workflows/check.yml`: `pnpm check` plus optional live Neon claims.
+- `.github/workflows/hosted-ticks.yml`: 10-minute production job ticks.
 
 ## Hosted behavior
 
@@ -20,6 +22,7 @@
 - Stale `processing` rows are returned to `pending` when their lease (`not_before`) expires.
 - Hobby cron is daily (`/api/jobs/run`). Mutations drain immediately. `GET /api/state`
   schedules due ticks and awaits a short drain when due characters or jobs exist.
+  GitHub Actions repeats that unattended every 10 minutes.
 - `AGENT_WORLD_INVITE_ONLY=true` plus `AGENT_WORLD_INVITE_USER_IDS` can close
   character creation without disabling public observation.
 - Do not enable OpenRouter, Privy, or Stripe in this codebase until those milestones.

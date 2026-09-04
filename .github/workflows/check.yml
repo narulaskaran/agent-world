@@ -1,0 +1,90 @@
+# Deterministic CI. The live Neon FOR UPDATE SKIP LOCKED test in
+# packages/hosted/src/hosted-neon.test.ts runs when AGENT_WORLD_NEON_TEST_URL
+# (or DATABASE_URL) is present. Prefer a GitHub Actions secret of that name.
+# If the secret is unset, this job tries a disposable neon.new database so the
+# claim test can still run; if that also fails, the test stays skipped.
+
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.repository == 'narulaskaran/agent-world'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve Neon test database
+        env:
+          AGENT_WORLD_NEON_TEST_URL: ${{ secrets.AGENT_WORLD_NEON_TEST_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, urllib.parse, urllib.request
+
+          env_path = pathlib.Path(os.environ["GITHUB_ENV"])
+          url = os.environ.get("AGENT_WORLD_NEON_TEST_URL") or os.environ.get("DATABASE_URL") or ""
+          source = "secret" if url else ""
+
+          if not url:
+              print("No AGENT_WORLD_NEON_TEST_URL / DATABASE_URL secret; trying neon.new")
+              req = urllib.request.Request(
+                  "https://neon.new/api/v1/database",
+                  data=json.dumps({"ref": "agent-world-ci"}).encode(),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      payload = json.loads(resp.read().decode())
+                  url = payload.get("connection_string") or payload.get("database_url") or ""
+                  if url:
+                      source = "neon.new"
+              except Exception as error:
+                  print(f"neon.new unavailable: {error}")
+
+          if not url:
+              print("::notice::Neon SKIP LOCKED test will skip (no AGENT_WORLD_NEON_TEST_URL secret and neon.new unavailable).")
+              with env_path.open("a", encoding="utf-8") as handle:
+                  handle.write("NEON_TEST_SOURCE=skip\n")
+              raise SystemExit(0)
+
+          print(f"::add-mask::{url}")
+          password = urllib.parse.urlparse(url).password
+          if password:
+              print(f"::add-mask::{password}")
+          with env_path.open("a", encoding="utf-8") as handle:
+              handle.write("AGENT_WORLD_NEON_TEST_URL<<EOF\n")
+              handle.write(f"{url}\n")
+              handle.write("EOF\n")
+              handle.write(f"NEON_TEST_SOURCE={source}\n")
+          print(f"Neon SKIP LOCKED test will run from {source}.")
+          PY
+
+      - name: pnpm check
+        run: pnpm check
