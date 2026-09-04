@@ -2,14 +2,36 @@
 
 ## Goal
 
-Turn the validated local prototype into a hosted Vercel application with real
-authentication, durable managed Postgres, one Privy wallet per user, and safe
-autonomous spending. Preserve the game-first experience and deterministic test
-mode while replacing machine-local infrastructure.
+Turn the validated local prototype into a hosted Vercel application with Neon
+Postgres + Neon Auth, then add one Privy wallet per user and safe autonomous
+spending. Preserve the game-first experience and deterministic test mode while
+replacing machine-local infrastructure.
 
-This document separates the confirmed baseline from proposed hosted work. No
-hosted provider, authentication design, or wallet funding path has been selected
-or implemented yet.
+This document separates the confirmed local baseline from the selected hosted
+direction and remaining work. Vercel + Neon/Neon Auth is the target for the
+deterministic production milestone; OpenRouter, Privy, Stripe Crypto Onramp,
+and MPP funding/spending remain later integrations.
+
+## Current status and findings
+
+- The repository now includes a root [vercel.json](./vercel.json) for the pnpm
+  workspace: it builds `@agent-world/web`, serves `apps/web/dist`, and schedules
+  `/api/jobs/run` daily. Vercel Hobby rejected the original every-minute cron;
+  ready work is also drained after character creation and owner directives.
+- Vercel Cron invokes that path with an HTTP GET and can authenticate it with a
+  `CRON_SECRET` Bearer header. The serverless handler still must be implemented
+  and must reject requests without the expected secret.
+- The Vercel project `agent-world` is linked to the GitHub repository and a Neon
+  resource is connected. The initial Postgres migration has been applied. Neon
+  Auth and database URLs are injected by the integration; the hosted API uses
+  the serverless HTTP driver and a same-origin Auth proxy.
+- The hosted implementation is present: public state reads, authenticated owner
+  mutations, admin allowlisting, deterministic persisted jobs/chat/events,
+  polling, and health checks. Production deployment and browser auth smoke tests
+  are tracked below with their actual validation status.
+- Deterministic production is the gate: auth, durable database state, API
+  mutations, chat/log persistence, idempotent jobs, and public observation must
+  pass before enabling LLM calls or paid MPP calls.
 
 ## Confirmed baseline
 
@@ -34,8 +56,8 @@ intentionally ignored. A clone starts with a fresh world and no wallet secrets.
 
 ## Current local-only boundaries
 
-- Browser `localStorage` and a character name stand in for identity and
-  ownership. They are not authentication.
+- The local Fastify client historically used a character name as identity. The
+  hosted UI now derives ownership from the Neon Auth session and immutable ID.
 - Every mutation and every admin route in `apps/server/src/server.ts` is
   unauthenticated. This is intentional only for the trusted local demo.
 - `WorldRepository` uses `better-sqlite3`, synchronous transactions, and local
@@ -54,10 +76,10 @@ intentionally ignored. A clone starts with a fresh world and no wallet secrets.
 Decide these before selecting services or changing the schema:
 
 1. Is the hosted world public to watch, invite-only to join, or open to anyone?
-2. Will Privy provide both user authentication and embedded wallets, or will a
-   separate identity provider own sessions?
-3. Which managed Postgres, background-job, realtime, and observability services
-   fit the chosen Vercel topology?
+2. Neon Auth owns user sessions; confirm the exact client/server SDK and cookie
+   configuration for this Vite + Vercel Functions topology.
+3. Which Vercel-compatible background-job, realtime, and observability services
+   fit alongside Neon?
 4. Does each character spend directly from its owner's wallet, or does a
    platform wallet pay while the app maintains user balances? Do not blur these
    two economic models.
@@ -70,7 +92,7 @@ Decide these before selecting services or changing the schema:
 Re-verify current Vercel, Privy, Onramp, and provider capabilities rather than
 relying on this dated planning snapshot.
 
-### 2. Add authentication and authorization
+### 2. Add Neon Auth authentication and authorization
 
 - Add a durable user/account table keyed by the authentication provider's
   stable subject. Add `owner_id` to characters; keep public display names
@@ -88,12 +110,15 @@ relying on this dated planning snapshot.
   as non-sensitive UI convenience after server identity is authoritative.
 - Add unauthorized, cross-user, expired-session, and admin-boundary tests.
 
-### 3. Migrate persistence to managed Postgres
+### 3. Migrate persistence to Neon managed Postgres
 
 - Create a Postgres Drizzle schema and checked-in migrations; do not translate
   SQLite bootstrap SQL at runtime.
 - Implement the existing `WorldStore` behavior against Postgres. Keep
   `WorldEngine` storage-agnostic and retain SQLite for fast local tests if useful.
+- Use Neon's serverless driver over HTTP for one-shot serverless queries and
+  transactions, or its compatible pooled interface when the selected handler
+  requires it. Do not share long-lived TCP connections across invocations.
 - Preserve atomic semantics for unique character ownership/names, character
   leases, queue claims, budget reservation/settlement, daily reset, event
   pruning, and conversation membership. Use transactions and conditional
@@ -142,9 +167,12 @@ relying on this dated planning snapshot.
 
 ### 6. Deploy the web/API surfaces
 
-- Add explicit Vercel project/build configuration for the pnpm workspace and
-  decide whether web, API, workers, and realtime are one project or separate
-  services.
+- The first project is configured as a repository-root Vercel project in
+  `vercel.json`: pnpm install, filtered Vite build, `apps/web/dist` output, and
+  a production-only Cron invocation of `/api/jobs/run`. Add separate Vercel
+  projects only if the API/realtime topology requires it.
+- Deploy API handlers as Vercel Functions. Do not import `LocalRuntime` timers or
+  the in-process WebSocket hub from a serverless function.
 - Configure production API/realtime URLs without localhost fallbacks. Restrict
   CORS to known origins and apply appropriate cookie, CSRF, and security-header
   controls for the chosen session transport.
@@ -189,7 +217,12 @@ relying on this dated planning snapshot.
 
 ## Later product work
 
-After the hosted security and runtime foundation is proven: richer locations and
-group interactions, construction and persistent world improvements, reputation
-and an economy, third-party allowlisted paid tools, mobile layout, moderation,
-private conversations, export/recovery policy, and multiple characters per user.
+After the deterministic hosted gate is proven, add model-backed behavior through
+OpenRouter with explicit model, token, timeout, and logging controls. Then add
+one server-provisioned Privy wallet per user, Stripe Crypto Onramp funding into
+the supported chain/asset, and MPP payments authorized by server-side policy.
+Only after those integrations are safe should we expand into richer locations
+and group interactions, construction and persistent world improvements,
+reputation and an economy, third-party allowlisted paid tools, mobile layout,
+moderation, private conversations, export/recovery policy, and multiple
+characters per user.

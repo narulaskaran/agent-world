@@ -1,6 +1,7 @@
 {
   "name": "agent-world",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"pnpm --filter @agent-world/server dev\" \"pnpm --filter @agent-world/web dev\"",
@@ -21,5 +22,8 @@
       "better-sqlite3",
       "esbuild"
     ]
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0"
   }
 }

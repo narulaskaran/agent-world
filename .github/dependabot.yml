@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+    groups:
+      neon-and-drizzle:
+        patterns:
+          - drizzle-orm
+          - "@neondatabase/*"
+
+      testing:
+        patterns:
+          - vitest
+          - "@vitest/*"
+
+      web-toolchain:
+        patterns:
+          - vite
+          - "@vitejs/*"
+          - react
+          - react-dom
+          - "@types/react*"
+

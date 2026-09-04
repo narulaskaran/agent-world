@@ -11,3 +11,5 @@ test-results/
 agent-world-*.png
 *.log
 .DS_Store
+.vercel
+.env*

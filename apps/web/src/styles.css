@@ -81,6 +81,17 @@ select:focus-visible {
   align-items: center;
   gap: 12px;
 }
+.auth-label {
+  color: #74695f;
+  font-size: 12px;
+}
+.auth-user {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
 .connection {
   display: flex;
   gap: 7px;
@@ -270,6 +281,14 @@ select:focus-visible {
   width: 100% !important;
   height: 100% !important;
   object-fit: contain;
+}
+.world-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  background: #91b58f;
+  color: #304638;
+  font-weight: 700;
 }
 .empty-world {
   position: absolute;

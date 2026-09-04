@@ -5,7 +5,27 @@ import type {
   WorldSnapshot,
 } from "@agent-world/shared";
 
-export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4310";
+export const API_URL =
+  import.meta.env.VITE_API_URL ??
+  (import.meta.env.DEV ? "http://localhost:4310" : "");
+
+export interface Viewer {
+  userId: string;
+  isAdmin: boolean;
+  characterId: string | null;
+}
+
+export interface StateResponse {
+  snapshot: WorldSnapshot;
+  /** Optional while rolling out the authenticated API to older deployments. */
+  viewer?: Viewer | null;
+}
+
+export interface SessionResponse {
+  viewer: Viewer | null;
+  session?: unknown;
+  user?: unknown;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -14,6 +34,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers,
+    credentials: "include",
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as {
@@ -26,7 +47,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  state: () => request<WorldSnapshot>("/api/state"),
+  state: async (): Promise<StateResponse> => {
+    const payload = (await request<WorldSnapshot & {
+      viewer?: Viewer | null;
+      snapshot?: WorldSnapshot;
+    }>("/api/state")) as WorldSnapshot & {
+      viewer?: Viewer | null;
+      snapshot?: WorldSnapshot;
+    };
+    // Accept both the existing flat snapshot and the authenticated envelope
+    // so the client can be deployed before/after the API migration.
+    if (payload.snapshot) {
+      return { snapshot: payload.snapshot, viewer: payload.viewer };
+    }
+    const { viewer, ...snapshot } = payload;
+    return { snapshot: snapshot as WorldSnapshot, viewer };
+  },
+  session: () => request<SessionResponse>("/api/auth/session"),
   create: (input: CreateCharacterInput) =>
     request("/api/characters", { method: "POST", body: JSON.stringify(input) }),
   update: (name: string, input: UpdateCharacterInput) =>

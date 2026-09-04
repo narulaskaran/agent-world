@@ -1,64 +1,81 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { FormEvent } from "react";
-import type {
-  PublicCharacter,
-  ServerMessage,
-  WorldSnapshot,
-} from "@agent-world/shared";
+import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
 import { MODEL_OPTIONS, formatUsd } from "@agent-world/shared";
-import { API_URL, api } from "./api";
-import { WorldCanvas } from "./game/WorldCanvas";
+import type { Viewer } from "./api";
+import { api } from "./api";
+import { authClient, authErrorMessage, useAuth } from "./auth";
+
+const WorldCanvas = lazy(() =>
+  import("./game/WorldCanvas").then((module) => ({
+    default: module.WorldCanvas,
+  })),
+);
 
 type Modal = "create" | "admin" | null;
 
 function useWorld() {
   const [snapshot, setSnapshot] = useState<WorldSnapshot | null>(null);
+  const [viewer, setViewer] = useState<Viewer | null>(null);
   const [connected, setConnected] = useState(false);
+  const sessionChecked = useRef(false);
 
-  useEffect(() => {
-    let stopped = false;
-    let retry: number | undefined;
-    let initial: number | undefined;
-    let socket: WebSocket | undefined;
-    const connect = () => {
-      socket = new WebSocket(API_URL.replace(/^http/, "ws") + "/ws");
-      socket.onopen = () => setConnected(true);
-      socket.onmessage = (message) => {
-        const parsed = JSON.parse(String(message.data)) as ServerMessage;
-        if (parsed.type === "snapshot") setSnapshot(parsed.payload);
-      };
-      socket.onclose = () => {
-        setConnected(false);
-        if (!stopped) retry = window.setTimeout(connect, 1200);
-      };
-    };
-    void api
-      .state()
-      .then(setSnapshot)
-      .catch(() => {});
-    // Let React Strict Mode discard its probe mount before opening a socket.
-    initial = window.setTimeout(connect, 0);
-    return () => {
-      stopped = true;
-      if (initial !== undefined) clearTimeout(initial);
-      if (retry) clearTimeout(retry);
-      socket?.close();
-    };
+  const refresh = useCallback(async () => {
+    try {
+      const state = await api.state();
+      setSnapshot(state.snapshot);
+      if (state.viewer !== undefined) {
+        setViewer(state.viewer);
+        sessionChecked.current = true;
+      } else if (!sessionChecked.current) {
+        // Older API deployments return a flat snapshot. Ask the compatibility
+        // session endpoint once so ownership still comes from the server.
+        try {
+          const session = await api.session();
+          setViewer(session.viewer);
+        } catch {
+          setViewer(null);
+        } finally {
+          sessionChecked.current = true;
+        }
+      }
+      setConnected(true);
+    } catch {
+      setConnected(false);
+    }
   }, []);
 
-  return { snapshot, connected };
+  useEffect(() => {
+    void refresh();
+    const poll = window.setInterval(() => void refresh(), 4000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refresh]);
+
+  return { snapshot, viewer, connected, refresh };
 }
 
 function CreateModal({
-  snapshot,
   onClose,
-  onOwned,
+  onCreated,
 }: {
-  snapshot: WorldSnapshot;
   onClose: () => void;
-  onOwned: (name: string) => void;
+  onCreated: () => void;
 }) {
-  const [mode, setMode] = useState<"create" | "return">("create");
   const [name, setName] = useState("");
   const [personality, setPersonality] = useState("");
   const [model, setModel] = useState<string>(MODEL_OPTIONS[0].id);
@@ -70,17 +87,6 @@ function CreateModal({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    if (mode === "return") {
-      const match = snapshot.characters.find(
-        (character) =>
-          character.name.toLowerCase() === name.trim().toLowerCase(),
-      );
-      if (!match)
-        return setError("No character with that name lives here yet.");
-      onOwned(match.name);
-      onClose();
-      return;
-    }
     setBusy(true);
     try {
       await api.create({
@@ -91,7 +97,7 @@ function CreateModal({
         decisionIntervalSeconds: 60,
         firstMission: mission,
       });
-      onOwned(name.trim());
+      onCreated();
       onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -120,23 +126,7 @@ function CreateModal({
           ×
         </button>
         <p className="eyebrow">Your place in the world</p>
-        <h2 id="create-title">
-          {mode === "create" ? "Create your character" : "Welcome back"}
-        </h2>
-        <div className="segmented" aria-label="Character entry mode">
-          <button
-            className={mode === "create" ? "active" : ""}
-            onClick={() => setMode("create")}
-          >
-            New character
-          </button>
-          <button
-            className={mode === "return" ? "active" : ""}
-            onClick={() => setMode("return")}
-          >
-            I already live here
-          </button>
-        </div>
+        <h2 id="create-title">Create your character</h2>
         <form onSubmit={submit}>
           <label>
             Public name
@@ -150,8 +140,7 @@ function CreateModal({
               autoFocus
             />
           </label>
-          {mode === "create" && (
-            <>
+          <>
               <label>
                 Personality
                 <textarea
@@ -223,19 +212,14 @@ function CreateModal({
                   </button>
                 </div>
               </fieldset>
-            </>
-          )}
+          </>
           {error && (
             <p className="form-error" role="alert">
               {error}
             </p>
           )}
           <button className="primary wide" disabled={busy}>
-            {busy
-              ? "Opening the gate…"
-              : mode === "create"
-                ? "Enter Agent World"
-                : "Resume character"}
+            {busy ? "Opening the gate…" : "Enter Agent World"}
           </button>
         </form>
       </section>
@@ -245,16 +229,14 @@ function CreateModal({
 
 function CharacterInspector({
   character,
-  ownerName,
+  ownedCharacterId,
   onClose,
-  onForget,
 }: {
   character: PublicCharacter;
-  ownerName: string | null;
+  ownedCharacterId: string | null;
   onClose: () => void;
-  onForget: () => void;
 }) {
-  const owned = ownerName?.toLowerCase() === character.name.toLowerCase();
+  const owned = ownedCharacterId === character.id;
   const [tab, setTab] = useState<"overview" | "memory" | "controls">(
     "overview",
   );
@@ -328,6 +310,7 @@ function CharacterInspector({
             key={id}
             role="tab"
             aria-selected={tab === id}
+            disabled={id === "controls" && !owned}
             className={tab === id ? "active" : ""}
             onClick={() => setTab(id)}
           >
@@ -382,7 +365,13 @@ function CharacterInspector({
           </div>
         )}
 
-        {tab === "controls" && (
+        {tab === "controls" && !owned && (
+          <div className="inspector-pane" role="tabpanel">
+            <p className="empty-copy">Sign in as this character&apos;s owner to open controls.</p>
+          </div>
+        )}
+
+        {tab === "controls" && owned && (
           <div className="inspector-pane" role="tabpanel">
             <section className="owner-panel">
               <div className="owner-title">
@@ -529,7 +518,6 @@ function CharacterInspector({
                   )
                     void perform(async () => {
                       await api.remove(character.name);
-                      if (owned) onForget();
                       onClose();
                     });
                 }}
@@ -546,6 +534,123 @@ function CharacterInspector({
         )}
       </div>
     </aside>
+  );
+}
+
+function AuthModal({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result =
+        mode === "sign-in"
+          ? await authClient.signIn.email({ email, password })
+          : await authClient.signUp.email({ email, password, name });
+      const authError = authErrorMessage(result);
+      if (authError) throw new Error(authError);
+      // The API derives ownership from the authenticated server session. A
+      // session refresh also makes the viewer identity available immediately.
+      await api.session().catch(() => undefined);
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="modal auth-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-title"
+      >
+        <button className="icon-button close" onClick={onClose} aria-label="Close">
+          ×
+        </button>
+        <p className="eyebrow">A durable place in the world</p>
+        <h2 id="auth-title">
+          {mode === "sign-in" ? "Welcome back" : "Join Agent World"}
+        </h2>
+        <div className="segmented" aria-label="Authentication mode">
+          <button
+            className={mode === "sign-in" ? "active" : ""}
+            onClick={() => setMode("sign-in")}
+            type="button"
+          >
+            Sign in
+          </button>
+          <button
+            className={mode === "sign-up" ? "active" : ""}
+            onClick={() => setMode("sign-up")}
+            type="button"
+          >
+            Create account
+          </button>
+        </div>
+        <form onSubmit={submit}>
+          {mode === "sign-up" && (
+            <label>
+              Your name
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                minLength={2}
+                maxLength={80}
+                required
+                autoFocus
+                placeholder="Ada"
+              />
+            </label>
+          )}
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              autoFocus={mode === "sign-in"}
+              autoComplete="email"
+              placeholder="you@example.com"
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              minLength={8}
+              required
+              autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+            />
+          </label>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="primary wide" disabled={busy}>
+            {busy ? "Checking the gate…" : mode === "sign-in" ? "Sign in" : "Create account"}
+          </button>
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -664,18 +769,16 @@ function AdminModal({
 }
 
 export function App() {
-  const { snapshot, connected } = useWorld();
-  const [modal, setModal] = useState<Modal>(null);
+  const { snapshot, viewer, connected, refresh } = useWorld();
+  const { user, isPending: authPending } = useAuth();
+  const [modal, setModal] = useState<Modal | "auth">(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [ownerName, setOwnerName] = useState<string | null>(() =>
-    localStorage.getItem("agent-world-owner"),
-  );
   const selected =
     snapshot?.characters.find((character) => character.id === selectedId) ??
     null;
   const owner =
     snapshot?.characters.find(
-      (character) => character.name.toLowerCase() === ownerName?.toLowerCase(),
+      (character) => character.id === viewer?.characterId,
     ) ?? null;
   const recentEvents = useMemo(
     () => snapshot?.events.slice(0, 14) ?? [],
@@ -692,20 +795,16 @@ export function App() {
     : 0;
   const select = useCallback((id: string) => setSelectedId(id), []);
 
-  useEffect(() => {
-    if (snapshot && ownerName && !owner) {
-      localStorage.removeItem("agent-world-owner");
-      setOwnerName(null);
-    }
-  }, [snapshot, ownerName, owner]);
-
-  const own = (name: string) => {
-    localStorage.setItem("agent-world-owner", name);
-    setOwnerName(name);
+  const openCreate = () => {
+    if (!user) setModal("auth");
+    else if (owner) setSelectedId(owner.id);
+    else setModal("create");
   };
-  const forget = () => {
-    localStorage.removeItem("agent-world-owner");
-    setOwnerName(null);
+
+  const signOut = async () => {
+    await authClient.signOut();
+    await refresh();
+    setSelectedId(null);
   };
 
   if (!snapshot)
@@ -736,32 +835,47 @@ export function App() {
             {snapshot.connectedViewers} watching · {snapshot.characters.length}{" "}
             living here
           </div>
-          <button
-            className="world-spend"
-            onClick={() => setModal("admin")}
-            aria-label={`World spend ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)} daily budget. Open world administration.`}
-            title={`World spend: ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)}`}
-          >
-            <span
-              className="world-spend-ring"
-              style={{
-                background: `conic-gradient(#4e9470 ${worldSpendPercent}%, #e1d5bd 0)`,
-              }}
-            >
-              <span>$</span>
-            </span>
-          </button>
-          {owner ? (
+          {viewer?.isAdmin && (
             <button
-              className="owner-chip"
-              onClick={() => setSelectedId(owner.id)}
+              className="world-spend"
+              onClick={() => setModal("admin")}
+              aria-label={`World spend ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)} daily budget. Open world administration.`}
+              title={`World spend: ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)}`}
             >
-              <span style={{ background: owner.avatarColor }} />
-              {owner.name}
+              <span
+                className="world-spend-ring"
+                style={{
+                  background: `conic-gradient(#4e9470 ${worldSpendPercent}%, #e1d5bd 0)`,
+                }}
+              >
+                <span>$</span>
+              </span>
             </button>
+          )}
+          {authPending ? (
+            <span className="auth-label">Checking session…</span>
+          ) : user ? (
+            <>
+              {owner ? (
+                <button
+                  className="owner-chip"
+                  onClick={() => setSelectedId(owner.id)}
+                >
+                  <span style={{ background: owner.avatarColor }} />
+                  {owner.name}
+                </button>
+              ) : (
+                <button className="primary" onClick={openCreate}>
+                  Create a character
+                </button>
+              )}
+              <button className="secondary auth-user" onClick={() => void signOut()}>
+                {user.name || user.email} · Sign out
+              </button>
+            </>
           ) : (
-            <button className="primary" onClick={() => setModal("create")}>
-              Create a character
+            <button className="secondary" onClick={() => setModal("auth")}>
+              Sign in
             </button>
           )}
         </div>
@@ -774,11 +888,13 @@ export function App() {
             </div>
             <p>Click anyone to see what they're thinking and remembering.</p>
           </div>
-          <WorldCanvas
-            snapshot={snapshot}
-            selectedId={selectedId}
-            onSelect={select}
-          />
+          <Suspense fallback={<div className="world-loading">Opening the world…</div>}>
+            <WorldCanvas
+              snapshot={snapshot}
+              selectedId={selectedId}
+              onSelect={select}
+            />
+          </Suspense>
           {!snapshot.characters.length && (
             <div className="empty-world">
               <div className="empty-orb">✦</div>
@@ -787,7 +903,7 @@ export function App() {
                 Be the first character to step into Sunbeam Plaza. Anyone else
                 on this server will see you arrive.
               </p>
-              <button className="primary" onClick={() => setModal("create")}>
+              <button className="primary" onClick={openCreate}>
                 Create the first character
               </button>
             </div>
@@ -799,9 +915,8 @@ export function App() {
             <CharacterInspector
               key={selected.id}
               character={selected}
-              ownerName={ownerName}
+              ownedCharacterId={viewer?.characterId ?? null}
               onClose={() => setSelectedId(null)}
-              onForget={forget}
             />
           )}
         </section>
@@ -860,9 +975,16 @@ export function App() {
       </main>
       {modal === "create" && (
         <CreateModal
-          snapshot={snapshot}
           onClose={() => setModal(null)}
-          onOwned={own}
+          onCreated={() => void refresh()}
+        />
+      )}
+      {modal === "auth" && (
+        <AuthModal
+          onClose={() => {
+            setModal(null);
+            void refresh();
+          }}
         />
       )}
       {modal === "admin" && (
