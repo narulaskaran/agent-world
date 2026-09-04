@@ -67,6 +67,8 @@ describe("shortenFeedSummary", () => {
     expect(shortenFeedSummary("SmA511433 and SmB511433 started talking.")).toBe(
       "SmA and SmB started talking.",
     );
+    expect(shortenFeedSummary("From SmB511433")).toBe("From SmB");
+    expect(shortenFeedSummary("From SmA511433")).toBe("From SmA");
   });
 
   it("leaves human names unchanged", () => {

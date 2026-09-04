@@ -1195,9 +1195,18 @@ export function App() {
               {artifacts.slice(0, 6).map((artifact) => {
                 const actor = artifact.characterName ?? "someone";
                 const actorShort = shortDisplayId(actor);
+                const displayTitle = shortenFeedSummary(artifact.title);
                 return (
                   <li key={artifact.id}>
-                    <strong>{artifact.title}</strong>
+                    <strong
+                      title={
+                        displayTitle !== artifact.title
+                          ? artifact.title
+                          : undefined
+                      }
+                    >
+                      {displayTitle}
+                    </strong>
                     <span title={actor !== actorShort ? actor : undefined}>
                       {actorShort} · {artifact.locationId}
                     </span>
