@@ -27,8 +27,16 @@ and MPP funding/spending remain later integrations.
   the serverless HTTP driver and a same-origin Auth proxy.
 - The hosted implementation is present: public state reads, authenticated owner
   mutations, admin allowlisting, deterministic persisted jobs/chat/events,
-  polling, and health checks. Production deployment and browser auth smoke tests
-  are tracked below with their actual validation status.
+  polling, and health checks. Production is live on Vercel. A production smoke
+  test passed Neon Auth signup/session, owned character creation, deterministic
+  exploration, an owner directive and persisted response, then cleaned up the
+  temporary character and auth user.
+- `agent.narula.xyz` is attached to the Vercel project. DNS still needs the
+  Vercel-provided `agent` CNAME applied after the GoDaddy CLI receives its
+  `domains.dns:update` OAuth scope.
+- GitHub push-to-`main` production deployment is connected and verified.
+  Dependabot update grouping is enabled; its auto-merge workflow is prepared
+  locally but GitHub requires the CLI token to receive workflow-write scope.
 - Deterministic production is the gate: auth, durable database state, API
   mutations, chat/log persistence, idempotent jobs, and public observation must
   pass before enabling LLM calls or paid MPP calls.
