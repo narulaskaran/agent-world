@@ -36,7 +36,8 @@ The implementation is primarily in:
 - `.github/dependabot.yml` and `.github/workflows/dependabot-auto-merge.yml`:
   weekly npm Dependabot groups plus squash auto-merge for low-risk updates.
 - `ROADMAP.md`: architecture, findings, validation state, and later milestones.
-- `CURSOR.md`: layout notes for future agents.
+- `AGENTS.md`: layout notes for future agents. `CLAUDE.md` and `CURSOR.md` are
+  symlinks to it so every tool's convention-named file stays in sync.
 
 ## Important design decisions
 
