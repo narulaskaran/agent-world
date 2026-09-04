@@ -81,6 +81,12 @@ select:focus-visible {
   align-items: center;
   gap: 12px;
 }
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
 .auth-label {
   color: #74695f;
   font-size: 12px;
@@ -260,6 +266,8 @@ select:focus-visible {
 }
 .world-meta p {
   margin: 0;
+  min-width: 0;
+  text-align: right;
 }
 .world-dot {
   display: inline-block;
@@ -311,7 +319,8 @@ select:focus-visible {
 .empty-world p {
   max-width: 440px;
   margin: 0 0 22px;
-  color: #374537;
+  color: #1f2c1f;
+  font-weight: 500;
 }
 .empty-orb {
   width: 66px;
@@ -356,6 +365,9 @@ select:focus-visible {
     25px "DM Serif Display",
     serif;
 }
+.panel-heading .eyebrow {
+  color: #5c5146;
+}
 .eyebrow {
   margin: 0;
   color: #7d6d5c;
@@ -368,8 +380,8 @@ select:focus-visible {
   align-self: center;
   padding: 5px 8px;
   border: 1px solid #d7c8ad;
-  color: #857667;
-  font-size: 10px;
+  color: #5c5146;
+  font-size: 0.875rem;
   border-radius: 5px;
 }
 .event-list {
@@ -401,13 +413,16 @@ select:focus-visible {
   line-height: 1.35;
 }
 .event time {
-  color: #9b8d7d;
-  font-size: 10px;
+  color: #53483e;
+  font-size: 0.875rem;
 }
 .event details summary {
   cursor: pointer;
   color: #526b5c;
   font-size: 11px;
+  box-sizing: border-box;
+  min-height: 2.75rem;
+  padding-block: 0.75rem;
 }
 .event pre {
   white-space: pre-wrap;
@@ -843,8 +858,8 @@ select:focus-visible {
   font-size: 13px;
 }
 .artifact-list span {
-  color: #857667;
-  font-size: 11px;
+  color: #53483e;
+  font-size: 0.875rem;
 }
 .artifact-list p {
   margin: 6px 0 0;
@@ -881,28 +896,98 @@ select:focus-visible {
 }
 @media (max-width: 900px) {
   .topbar {
-    height: auto;
-    min-height: 72px;
-    padding: 12px 14px;
-    flex-wrap: wrap;
-    gap: 10px;
+    height: 56px;
+    min-height: 56px;
+    padding: 0 12px;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  .brand {
+    flex-shrink: 0;
+    gap: 8px;
+    min-width: 0;
+  }
+  .brand p {
+    display: none;
+  }
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+  .brand h1 {
+    font-size: 18px;
+    white-space: nowrap;
   }
   .header-actions {
-    width: 100%;
-    flex-wrap: wrap;
-    justify-content: flex-start;
+    width: auto;
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .header-actions::-webkit-scrollbar {
+    display: none;
+  }
+  .header-status {
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .connection {
+    flex-shrink: 0;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .viewer-count {
+    padding: 4px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .viewer-count-here {
+    display: none;
+  }
+  .header-actions .primary,
+  .header-actions .secondary {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .header-actions .primary {
+    padding: 8px 14px;
+  }
+  .owner-chip {
+    height: 32px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .auth-user {
+    max-width: 132px;
   }
   .main-grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(280px, 58dvh) minmax(240px, auto);
     height: auto;
-    min-height: calc(100dvh - 72px);
+    min-height: calc(100dvh - 56px);
     padding: 8px;
   }
   .world-panel,
   .activity-panel {
     height: auto;
     min-height: 240px;
+  }
+  .world-meta {
+    gap: 8px;
+  }
+  .world-meta p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .inspector {
     left: 8px;
@@ -931,5 +1016,22 @@ select:focus-visible {
   .world-budget-control .money-input {
     grid-column: auto;
     grid-row: auto;
+  }
+}
+@media (max-width: 430px) {
+  .brand h1 {
+    font-size: 16px;
+  }
+  .header-status {
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    line-height: 1.2;
+  }
+  .viewer-count {
+    padding: 0;
+    background: transparent;
+    font-size: 10px;
   }
 }

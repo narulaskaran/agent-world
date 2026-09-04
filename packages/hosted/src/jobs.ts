@@ -359,7 +359,7 @@ const executeTick = async (
     characterId: character.id,
     characterName: character.name,
     summary: `${character.name} wandered to ${location.name}.`,
-    detail: "deterministic tick",
+    detail: "Looked around.",
     createdAt: now,
   });
 };
@@ -390,7 +390,7 @@ export async function executeJob(
         characterId: character.id,
         characterName: character.name,
         summary: `${character.name} explored ${location.name}.`,
-        detail: "deterministic job",
+        detail: "Looked around.",
         createdAt: now,
       });
     } else {
@@ -430,7 +430,6 @@ export async function executeJob(
       characterId: character.id,
       characterName: character.name,
       summary: `${character.name}: I’ll focus on this: ${text}`,
-      detail: "deterministic directive response",
       createdAt: now,
     });
     return;
