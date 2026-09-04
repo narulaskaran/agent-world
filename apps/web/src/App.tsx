@@ -9,7 +9,11 @@ import {
 } from "react";
 import type { FormEvent } from "react";
 import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
-import { MAX_CHARACTERS_PER_USER, MODEL_OPTIONS, formatUsd } from "@agent-world/shared";
+import {
+  MAX_CHARACTERS_PER_USER,
+  MODEL_OPTIONS,
+  formatUsd,
+} from "@agent-world/shared";
 import type { Viewer } from "./api";
 import { api, type AdminReport } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
@@ -141,77 +145,76 @@ function CreateModal({
             />
           </label>
           <>
+            <label>
+              Personality
+              <textarea
+                value={personality}
+                onChange={(event) => setPersonality(event.target.value)}
+                minLength={10}
+                maxLength={800}
+                required
+                placeholder="Curious, earnest, and slightly obsessed with tiny gardens…"
+                rows={4}
+              />
+              <small>
+                This shapes how your character speaks, explores, and remembers.
+              </small>
+            </label>
+            <div className="form-grid">
               <label>
-                Personality
-                <textarea
-                  value={personality}
-                  onChange={(event) => setPersonality(event.target.value)}
-                  minLength={10}
-                  maxLength={800}
-                  required
-                  placeholder="Curious, earnest, and slightly obsessed with tiny gardens…"
-                  rows={4}
-                />
-                <small>
-                  This shapes how your character speaks, explores, and
-                  remembers.
-                </small>
+                Mind
+                <select
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                >
+                  {MODEL_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <div className="form-grid">
-                <label>
-                  Mind
-                  <select
-                    value={model}
-                    onChange={(event) => setModel(event.target.value)}
-                  >
-                    {MODEL_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Daily budget
-                  <div className="money-input">
-                    <span>$</span>
-                    <input
-                      type="number"
-                      min="0.05"
-                      max="2"
-                      step="0.05"
-                      value={budget}
-                      onChange={(event) => setBudget(event.target.value)}
-                      required
-                    />
-                  </div>
-                </label>
-              </div>
-              <fieldset>
-                <legend>First adventure</legend>
-                <div className="mission-grid">
-                  <button
-                    type="button"
-                    className={`mission ${mission === "meet" ? "selected" : ""}`}
-                    onClick={() => setMission("meet")}
-                  >
-                    <span className="mission-icon">☕</span>
-                    <strong>Meet someone</strong>
-                    <small>Find another agent and start a conversation.</small>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mission ${mission === "explore" ? "selected" : ""}`}
-                    onClick={() => setMission("explore")}
-                  >
-                    <span className="mission-icon">🧭</span>
-                    <strong>Explore the world</strong>
-                    <small>
-                      Wander through the plaza, park, café, and library.
-                    </small>
-                  </button>
+              <label>
+                Daily budget
+                <div className="money-input">
+                  <span>$</span>
+                  <input
+                    type="number"
+                    min="0.05"
+                    max="2"
+                    step="0.05"
+                    value={budget}
+                    onChange={(event) => setBudget(event.target.value)}
+                    required
+                  />
                 </div>
-              </fieldset>
+              </label>
+            </div>
+            <fieldset>
+              <legend>First adventure</legend>
+              <div className="mission-grid">
+                <button
+                  type="button"
+                  className={`mission ${mission === "meet" ? "selected" : ""}`}
+                  onClick={() => setMission("meet")}
+                >
+                  <span className="mission-icon">☕</span>
+                  <strong>Meet someone</strong>
+                  <small>Find another agent and start a conversation.</small>
+                </button>
+                <button
+                  type="button"
+                  className={`mission ${mission === "explore" ? "selected" : ""}`}
+                  onClick={() => setMission("explore")}
+                >
+                  <span className="mission-icon">🧭</span>
+                  <strong>Explore the world</strong>
+                  <small>
+                    Wander through the plaza, park, café, and library.
+                  </small>
+                </button>
+              </div>
+            </fieldset>
           </>
           {error && (
             <p className="form-error" role="alert">
@@ -427,7 +430,9 @@ function CharacterInspector({
 
         {tab === "controls" && !owned && (
           <div className="inspector-pane" role="tabpanel">
-            <p className="empty-copy">Sign in as this character&apos;s owner to open controls.</p>
+            <p className="empty-copy">
+              Sign in as this character&apos;s owner to open controls.
+            </p>
           </div>
         )}
 
@@ -571,10 +576,15 @@ function CharacterInspector({
                   className="secondary"
                   onClick={() =>
                     void perform(async () => {
-                      const exported = await api.exportCharacter(character.name);
-                      const blob = new Blob([JSON.stringify(exported, null, 2)], {
-                        type: "application/json",
-                      });
+                      const exported = await api.exportCharacter(
+                        character.name,
+                      );
+                      const blob = new Blob(
+                        [JSON.stringify(exported, null, 2)],
+                        {
+                          type: "application/json",
+                        },
+                      );
                       const url = URL.createObjectURL(blob);
                       const link = document.createElement("a");
                       link.href = url;
@@ -689,7 +699,11 @@ function AuthModal({ onClose }: { onClose: () => void }) {
         aria-modal="true"
         aria-labelledby="auth-title"
       >
-        <button className="icon-button close" onClick={onClose} aria-label="Close">
+        <button
+          className="icon-button close"
+          onClick={onClose}
+          aria-label="Close"
+        >
           ×
         </button>
         <p className="eyebrow">A durable place in the world</p>
@@ -747,7 +761,9 @@ function AuthModal({ onClose }: { onClose: () => void }) {
               onChange={(event) => setPassword(event.target.value)}
               minLength={8}
               required
-              autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+              autoComplete={
+                mode === "sign-in" ? "current-password" : "new-password"
+              }
             />
           </label>
           {error && (
@@ -756,7 +772,11 @@ function AuthModal({ onClose }: { onClose: () => void }) {
             </p>
           )}
           <button className="primary wide" disabled={busy}>
-            {busy ? "Checking the gate…" : mode === "sign-in" ? "Sign in" : "Create account"}
+            {busy
+              ? "Checking the gate…"
+              : mode === "sign-in"
+                ? "Sign in"
+                : "Create account"}
           </button>
         </form>
       </section>
@@ -888,7 +908,7 @@ function AdminModal({
             Reset world
           </button>
         </div>
-        {(details?.reports?.length || details?.alerts?.length) ? (
+        {details?.reports?.length || details?.alerts?.length ? (
           <section className="admin-lists">
             {details?.alerts?.length ? (
               <div>
@@ -964,8 +984,7 @@ export function App() {
     snapshot?.characters.find((character) => character.id === selectedId) ??
     null;
   const ownedIds =
-    viewer?.characterIds ??
-    (viewer?.characterId ? [viewer.characterId] : []);
+    viewer?.characterIds ?? (viewer?.characterId ? [viewer.characterId] : []);
   const ownedCharacters =
     snapshot?.characters.filter((character) =>
       ownedIds.includes(character.id),
@@ -1019,13 +1038,16 @@ export function App() {
           </div>
         </div>
         <div className="header-actions">
-          <div className={`connection ${connected ? "online" : ""}`}>
-            <span />
-            {connected ? "World live" : "Reconnecting"}
-          </div>
-          <div className="viewer-count">
-            {snapshot.connectedViewers} watching · {snapshot.characters.length}{" "}
-            living here
+          <div className="header-status">
+            <div className={`connection ${connected ? "online" : ""}`}>
+              <span />
+              {connected ? "World live" : "Reconnecting"}
+            </div>
+            <div className="viewer-count">
+              {snapshot.connectedViewers} watching ·{" "}
+              {snapshot.characters.length} living
+              <span className="viewer-count-here"> here</span>
+            </div>
           </div>
           {viewer?.isAdmin && (
             <button
@@ -1060,10 +1082,15 @@ export function App() {
               ))}
               {ownedCharacters.length < MAX_CHARACTERS_PER_USER && (
                 <button className="primary" onClick={openCreate}>
-                  {ownedCharacters.length ? "Add character" : "Create a character"}
+                  {ownedCharacters.length
+                    ? "Add character"
+                    : "Create a character"}
                 </button>
               )}
-              <button className="secondary auth-user" onClick={() => void signOut()}>
+              <button
+                className="secondary auth-user"
+                onClick={() => void signOut()}
+              >
                 {user.name || user.email} · Sign out
               </button>
             </>
@@ -1080,9 +1107,15 @@ export function App() {
             <div>
               <span className="world-dot" /> Shared world
             </div>
-            <p>Click anyone to see what they're thinking and remembering.</p>
+            <p>
+              {snapshot.characters.length
+                ? "Click anyone to see what they're thinking and remembering."
+                : "Nobody is here yet."}
+            </p>
           </div>
-          <Suspense fallback={<div className="world-loading">Opening the world…</div>}>
+          <Suspense
+            fallback={<div className="world-loading">Opening the world…</div>}
+          >
             <WorldCanvas
               snapshot={snapshot}
               selectedId={selectedId}
@@ -1135,7 +1168,8 @@ export function App() {
                 <li key={artifact.id}>
                   <strong>{artifact.title}</strong>
                   <span>
-                    {artifact.characterName ?? "someone"} · {artifact.locationId}
+                    {artifact.characterName ?? "someone"} ·{" "}
+                    {artifact.locationId}
                   </span>
                   <p>{artifact.body}</p>
                 </li>
@@ -1162,7 +1196,9 @@ export function App() {
                     {item.detail &&
                       !item.detail.startsWith("conversation:") && (
                         <details>
-                          <summary>See details</summary>
+                          <summary aria-label={`See details: ${item.summary}`}>
+                            See details
+                          </summary>
                           <pre>{item.detail}</pre>
                         </details>
                       )}
