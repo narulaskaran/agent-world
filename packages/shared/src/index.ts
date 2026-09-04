@@ -336,6 +336,7 @@ export interface WorldSnapshot {
   budgetDate: string;
   connectedViewers: number;
   generatedAt: number;
+  inviteOnly?: boolean;
 }
 
 export type ServerMessage =

@@ -37,9 +37,11 @@ The implementation is primarily in:
   the client.
 - Admin routes require `AGENT_WORLD_ADMIN_USER_IDS`.
 - Vercel Hobby rejected an every-minute cron. Character creation and owner
-  directives drain ready deterministic work immediately; `GET /api/state` may
-  start a short background drain when due work exists; a daily cron remains for
-  maintenance. A durable higher-frequency scheduler is still limited by Hobby.
+  directives drain ready deterministic work immediately; `GET /api/state`
+  schedules due ticks and awaits a short drain when characters or jobs are due,
+  so a watched world keeps moving between the daily Hobby cron runs. Overnight
+  disconnected autonomy still depends on that daily cron (or a later Pro/Queue
+  scheduler).
 - Production Auth traffic uses `/api/auth/*` as a same-origin proxy. The proxy
   authenticates its server-to-server hop with Neon's own origin so Better Auth
   origin validation succeeds.
@@ -47,25 +49,29 @@ The implementation is primarily in:
   1.84 MB (506 KB gzip) to 624 KB (170 KB gzip). The associated repository
   issue was closed after verification.
 - Conversation *lines* are private to participants and admins. The public log
-  still records that people met.
+  still records that people met. Owner directive text is not copied into public
+  event details.
 - Users may create up to five characters. Names remain globally unique.
+- `AGENT_WORLD_INVITE_ONLY=true` restricts character creation to
+  `AGENT_WORLD_INVITE_USER_IDS` and admins. Leave it false until invites are
+  configured in Vercel.
 - LLM calls remain disabled. The intended later provider is OpenRouter.
 - Privy per-user wallets, Stripe Crypto Onramp, and MPP payment authorization
   remain later milestones and must preserve server-side spend policy.
 
 ## Remaining work
 
-1. Hosted integration tests for cross-user ownership, admin boundaries,
-   concurrent queue claims, stale job recovery, and transaction semantics now
-   live in `packages/hosted/src/hosted.test.ts` against MemoryStore. A live
-   Neon SKIP LOCKED matrix is still a useful addition when a disposable
-   database URL is available in CI.
+1. `packages/hosted/src/hosted-neon.test.ts` exercises live `FOR UPDATE SKIP
+   LOCKED` claims against Neon when `AGENT_WORLD_NEON_TEST_URL` or
+   `DATABASE_URL` is set. CI still skips it until a disposable database URL is
+   available in the workflow.
 2. Disconnected autonomy faster than daily still depends on Hobby cron limits.
-   The queue, leases, ticks, and opportunistic drain are in place; a Pro cron
-   or Vercel Queue would raise the cadence.
+   Spectator polls now schedule due ticks and drain them; a Pro cron or Vercel
+   Queue would raise the unattended cadence.
 3. Structured JSON logs, per-user mutation rate limits, event retention, and
    optional `OPERATOR_ALERT_WEBHOOK` alerts are implemented. Wire a real
-   webhook in Vercel before opening signup broadly.
+   webhook in Vercel before opening signup broadly. Custom domain DNS for
+   `agent.narula.xyz` still needs the GoDaddy `domains.dns:update` scope.
 4. Follow `ROADMAP.md` for OpenRouter, then Privy + Stripe Crypto Onramp + MPP.
    Do not enable paid calls in CI or ordinary preview deployments.
 

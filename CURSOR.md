@@ -19,7 +19,9 @@
 - Deterministic jobs live in `character_queue`. Claims use `FOR UPDATE SKIP LOCKED`.
 - Stale `processing` rows are returned to `pending` when their lease (`not_before`) expires.
 - Hobby cron is daily (`/api/jobs/run`). Mutations drain immediately. `GET /api/state`
-  may start a short background drain when due work exists.
+  schedules due ticks and awaits a short drain when due characters or jobs exist.
+- `AGENT_WORLD_INVITE_ONLY=true` plus `AGENT_WORLD_INVITE_USER_IDS` can close
+  character creation without disabling public observation.
 - Do not enable OpenRouter, Privy, or Stripe in this codebase until those milestones.
 
 ## Commands

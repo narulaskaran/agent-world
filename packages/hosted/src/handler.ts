@@ -16,7 +16,13 @@ import {
 } from "../../shared/src/index.js";
 import { ConflictError, HttpError } from "./errors.js";
 import { logEvent, postOperatorAlert, type LogEvent } from "./logging.js";
-import { addPublicEvent, runAutonomy, type AutonomyOptions } from "./jobs.js";
+import {
+  addPublicEvent,
+  enqueueTick,
+  positionAt,
+  runAutonomy,
+  type AutonomyOptions,
+} from "./jobs.js";
 import type { CharacterRow, HostedStore } from "./store.js";
 
 export type Request = {
@@ -38,6 +44,8 @@ export interface HostedEnv {
   adminUserIds: string[];
   webOrigins: string[];
   operatorAlertWebhook?: string;
+  inviteOnly: boolean;
+  inviteUserIds: string[];
   maxCharactersPerUser: number;
   mutationLimit: number;
   mutationWindowMs: number;
@@ -113,6 +121,11 @@ export const parseEnv = (
     .map((value) => value.trim())
     .filter(Boolean),
   operatorAlertWebhook: env.OPERATOR_ALERT_WEBHOOK,
+  inviteOnly: env.AGENT_WORLD_INVITE_ONLY === "true",
+  inviteUserIds: (env.AGENT_WORLD_INVITE_USER_IDS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
   maxCharactersPerUser: Number(env.AGENT_WORLD_MAX_CHARACTERS_PER_USER ?? MAX_CHARACTERS_PER_USER) || MAX_CHARACTERS_PER_USER,
   mutationLimit: Number(env.AGENT_WORLD_MUTATION_LIMIT ?? 30) || 30,
   mutationWindowMs: Number(env.AGENT_WORLD_MUTATION_WINDOW_MS ?? 60_000) || 60_000,
@@ -131,29 +144,36 @@ export const isAdmin = (env: HostedEnv, userId: string): boolean =>
 export const hasCronAccess = (env: HostedEnv, request: Request): boolean =>
   Boolean(env.cronSecret && header(request, "authorization") === `Bearer ${env.cronSecret}`);
 
-const characterView = (row: CharacterRow) => ({
-  id: row.id,
-  ownerId: row.ownerId,
-  name: row.name,
-  personality: row.personality,
-  model: row.model,
-  dailyBudgetMicros: row.dailyBudgetMicros,
-  spentTodayMicros: row.spentTodayMicros,
-  decisionIntervalSeconds: row.decisionIntervalSeconds,
-    state: row.state as CharacterState,
-  x: row.x,
-  y: row.y,
-  targetX: row.targetX,
-  targetY: row.targetY,
-  intent: row.intent,
-  speech: row.speech,
-  avatarUrl: row.avatarUrl,
-  avatarColor: row.avatarColor,
-  toolActive: row.toolActive,
-  reputation: row.reputation,
-  locationId: row.locationId,
-  updatedAt: row.updatedAt,
-});
+const characterView = (row: CharacterRow, now: number) => {
+  const pos = positionAt(row, now);
+  const moving = row.state === "moving" && now < row.movementArrivesAt;
+  return {
+    id: row.id,
+    ownerId: row.ownerId,
+    name: row.name,
+    personality: row.personality,
+    model: row.model,
+    dailyBudgetMicros: row.dailyBudgetMicros,
+    spentTodayMicros: row.spentTodayMicros,
+    decisionIntervalSeconds: row.decisionIntervalSeconds,
+    state: (moving ? "moving" : row.state === "moving" ? "active" : row.state) as CharacterState,
+    x: pos.x,
+    y: pos.y,
+    targetX: row.targetX,
+    targetY: row.targetY,
+    intent: row.intent,
+    speech: row.speech,
+    avatarUrl: row.avatarUrl,
+    avatarColor: row.avatarColor,
+    toolActive: row.toolActive,
+    reputation: row.reputation,
+    locationId: row.locationId,
+    updatedAt: row.updatedAt,
+  };
+};
+
+const mayCreateCharacter = (env: HostedEnv, userId: string): boolean =>
+  !env.inviteOnly || isAdmin(env, userId) || env.inviteUserIds.includes(userId);
 
 const autonomyOptions = (deps: HostedDeps, limit: number): AutonomyOptions => ({
   now: deps.now,
@@ -170,6 +190,8 @@ const worldSnapshot = async (
   now: number,
   viewerCharacterIds: string[],
   admin: boolean,
+  connectedViewers: number,
+  inviteOnly: boolean,
 ): Promise<WorldSnapshot> => {
   const [state, characterRows, memoryRows, relationshipRows, eventRows, artifacts] =
     await Promise.all([
@@ -204,7 +226,7 @@ const worldSnapshot = async (
         impression: relationship.impression,
         affinity: relationship.affinity,
       }));
-    const view = characterView(row);
+    const view = characterView(row, now);
     const { ownerId: _ownerId, ...publicView } = view;
     return { ...publicView, memories, relationships };
   });
@@ -227,8 +249,9 @@ const worldSnapshot = async (
     serverSpentTodayMicros: state.serverSpentTodayMicros,
     serverDailyBudgetMicros: state.serverDailyBudgetMicros,
     budgetDate: state.budgetDate,
-    connectedViewers: 0,
+    connectedViewers,
     generatedAt: now,
+    inviteOnly,
   };
 };
 
@@ -468,25 +491,34 @@ export function createHandler(deps: HostedDeps) {
       const admin = Boolean(viewerId && isAdmin(deps.env, viewerId));
 
       if (path === "/state" && method === "GET") {
+        const now = deps.now();
+        await deps.store.touchPresence(
+          `${viewerId ?? "anon"}:${clientKey(request)}`,
+          now,
+        );
+        const dueCharacters = await deps.store.dueCharacterIds(now);
+        const dueJobs = await deps.store.countDueJobs(now);
+        if (dueCharacters.length > 0 || dueJobs > 0) {
+          await runAutonomy(
+            deps.store,
+            autonomyOptions(deps, Math.min(8, deps.env.drainLimit)),
+          ).catch((error) => {
+            log({
+              level: "error",
+              msg: "opportunistic drain failed",
+              kind: errorMessage(error),
+              requestId,
+            });
+          });
+        }
         const snapshot = await worldSnapshot(
           deps.store,
           deps.now(),
           ownedIds,
           admin,
+          await deps.store.countPresence(deps.now() - 20_000),
+          deps.env.inviteOnly,
         );
-        const due = await deps.store.countDueJobs(deps.now());
-        if (due > 0) {
-          const drain = runAutonomy(deps.store, autonomyOptions(deps, 8)).catch(
-            (error) =>
-              log({
-                level: "error",
-                msg: "background drain failed",
-                kind: errorMessage(error),
-                requestId,
-              }),
-          );
-          if (deps.waitUntil) deps.waitUntil(drain);
-        }
         return send(response, 200, {
           snapshot,
           viewer: viewerId
@@ -518,6 +550,10 @@ export function createHandler(deps: HostedDeps) {
         const ownerId = await requireUser(deps, request, response);
         if (!ownerId) return;
         if (!(await rateLimitOrReject(deps, request, response, ownerId))) return;
+        if (!mayCreateCharacter(deps.env, ownerId))
+          return send(response, 403, {
+            error: "Character creation is invite-only right now",
+          });
         const parsed = CreateCharacterSchema.safeParse(parseBody(request));
         if (!parsed.success)
           return send(response, 400, {
@@ -553,6 +589,7 @@ export function createHandler(deps: HostedDeps) {
               expiresAt: now + 1_800_000,
               createdAt: now,
             });
+            await enqueueTick(deps.store, row.id, row.nextDecisionAt, now);
           });
         } catch (error) {
           if (error instanceof ConflictError)
@@ -565,13 +602,21 @@ export function createHandler(deps: HostedDeps) {
         }
         await runAutonomy(deps.store, autonomyOptions(deps, deps.env.drainLimit));
         const created = await deps.store.getCharacter(row.id);
-        return send(response, 201, created ? characterView(created) : characterView(row));
+        return send(
+          response,
+          201,
+          created ? characterView(created, deps.now()) : characterView(row, now),
+        );
       }
 
       if (path === "/characters/import" && method === "POST") {
         const ownerId = await requireUser(deps, request, response);
         if (!ownerId) return;
         if (!(await rateLimitOrReject(deps, request, response, ownerId))) return;
+        if (!mayCreateCharacter(deps.env, ownerId))
+          return send(response, 403, {
+            error: "Character creation is invite-only right now",
+          });
         const parsed = CharacterExportSchema.safeParse(parseBody(request));
         if (!parsed.success)
           return send(response, 400, {
@@ -613,6 +658,7 @@ export function createHandler(deps: HostedDeps) {
               createdAt: now,
             })),
           );
+        await enqueueTick(deps.store, row.id, row.nextDecisionAt, now);
         await addPublicEvent(deps.store, {
           kind: "arrival",
           characterId: row.id,
@@ -620,7 +666,7 @@ export function createHandler(deps: HostedDeps) {
           summary: `${row.name} returned from an exported memory.`,
           createdAt: now,
         });
-        return send(response, 201, characterView(row));
+        return send(response, 201, characterView(row, now));
       }
 
       const characterMatch = path.match(
@@ -716,7 +762,7 @@ export function createHandler(deps: HostedDeps) {
             characterId: owned.id,
             characterName: owned.name,
             summary: `${owned.name} received a new direction.`,
-            detail: parsed.data.text,
+            detail: null,
             createdAt: now,
           });
           return send(response, 200, { ok: true });
@@ -884,6 +930,30 @@ export function createHandler(deps: HostedDeps) {
         if (!(await requireAdmin(deps, request, response))) return;
         await deps.store.resetWorld(deps.now());
         return send(response, 200, { ok: true });
+      }
+      const muteMatch = path.match(/^\/admin\/characters\/([^/]+)\/mute$/);
+      if (muteMatch && method === "POST") {
+        if (!(await requireAdmin(deps, request, response))) return;
+        const target = await deps.store.getCharacter(
+          decodeURIComponent(muteMatch[1]!),
+        );
+        if (!target)
+          return send(response, 404, { error: "Character not found" });
+        const muted = Boolean(parseBody(request).muted);
+        await deps.store.updateCharacter(target.id, {
+          muted,
+          updatedAt: deps.now(),
+        });
+        await addPublicEvent(deps.store, {
+          kind: "system",
+          characterId: target.id,
+          characterName: target.name,
+          summary: muted
+            ? `${target.name} was muted by an operator.`
+            : `${target.name} was unmuted by an operator.`,
+          createdAt: deps.now(),
+        });
+        return send(response, 200, { ok: true, muted });
       }
       const hideMatch = path.match(/^\/admin\/events\/([^/]+)\/hide$/);
       if (hideMatch && method === "POST") {

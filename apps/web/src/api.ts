@@ -50,6 +50,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export interface AdminReport {
+  id?: string;
+  status?: string;
+  reason?: string;
+  characterId?: string | null;
+}
+
 export const api = {
   state: async (): Promise<StateResponse> => {
     const payload = (await request<
@@ -127,7 +134,7 @@ export const api = {
       costs: unknown[];
       world: Record<string, unknown>;
       inFlight: string[];
-      reports?: unknown[];
+      reports?: AdminReport[];
       alerts?: unknown[];
     }>("/api/admin"),
   pauseWorld: (paused: boolean) =>
@@ -145,5 +152,15 @@ export const api = {
     request(`/api/admin/events/${encodeURIComponent(eventId)}/hide`, {
       method: "POST",
       body: "{}",
+    }),
+  resolveReport: (reportId: string) =>
+    request(`/api/admin/reports/${encodeURIComponent(reportId)}/resolve`, {
+      method: "POST",
+      body: "{}",
+    }),
+  muteCharacter: (characterId: string, muted: boolean) =>
+    request(`/api/admin/characters/${encodeURIComponent(characterId)}/mute`, {
+      method: "POST",
+      body: JSON.stringify({ muted }),
     }),
 };

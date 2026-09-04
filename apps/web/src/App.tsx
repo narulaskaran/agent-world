@@ -11,7 +11,7 @@ import type { FormEvent } from "react";
 import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
 import { MAX_CHARACTERS_PER_USER, MODEL_OPTIONS, formatUsd } from "@agent-world/shared";
 import type { Viewer } from "./api";
-import { api } from "./api";
+import { api, type AdminReport } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
 
 const WorldCanvas = lazy(() =>
@@ -434,7 +434,7 @@ function CharacterInspector({
         {tab === "controls" && owned && (
           <div className="inspector-pane" role="tabpanel">
             <section className="owner-panel">
-              <div className=  "owner-title">
+              <div className="owner-title">
                 <span>Owner controls</span>
                 <span>
                   {formatUsd(
@@ -776,11 +776,24 @@ function AdminModal({
     queueDepth: number;
     costs: unknown[];
     inFlight: string[];
-    reports?: unknown[];
+    reports?: AdminReport[];
     alerts?: unknown[];
   } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const refreshAdmin = () => {
+    void api.admin().then((payload) =>
+      setDetails({
+        liveMpp: payload.liveMpp,
+        queueDepth: payload.queueDepth,
+        costs: payload.costs,
+        inFlight: payload.inFlight,
+        reports: payload.reports,
+        alerts: payload.alerts,
+      }),
+    );
+  };
   useEffect(() => {
-    void api.admin().then(setDetails);
+    refreshAdmin();
   }, []);
   return (
     <div
@@ -893,18 +906,45 @@ function AdminModal({
               <div>
                 <h3>Reports</h3>
                 <ul>
-                  {details.reports.slice(0, 8).map((report) => {
-                    const item = report as {
-                      id?: string;
-                      status?: string;
-                      reason?: string;
-                    };
-                    return (
-                      <li key={String(item.id)}>
+                  {details.reports.slice(0, 8).map((item) => (
+                    <li key={String(item.id)}>
+                      <span>
                         {item.status}: {item.reason}
-                      </li>
-                    );
-                  })}
+                      </span>
+                      {item.status === "open" && item.id ? (
+                        <span className="button-row">
+                          <button
+                            className="secondary"
+                            disabled={busyId === item.id}
+                            onClick={() => {
+                              setBusyId(item.id ?? null);
+                              void api
+                                .resolveReport(item.id!)
+                                .then(refreshAdmin)
+                                .finally(() => setBusyId(null));
+                            }}
+                          >
+                            Resolve
+                          </button>
+                          {item.characterId ? (
+                            <button
+                              className="danger"
+                              disabled={busyId === item.id}
+                              onClick={() => {
+                                setBusyId(item.id ?? null);
+                                void api
+                                  .muteCharacter(item.characterId!, true)
+                                  .then(refreshAdmin)
+                                  .finally(() => setBusyId(null));
+                              }}
+                            >
+                              Mute
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
                 </ul>
               </div>
             ) : null}
@@ -1054,12 +1094,19 @@ export function App() {
               <div className="empty-orb">✦</div>
               <h2>The world is quiet—for now.</h2>
               <p>
-                Be the first character to step into Sunbeam Plaza. Anyone else
-                on this server will see you arrive.
+                {snapshot.inviteOnly
+                  ? "Watch the plaza while invites are closed. Operators will open character creation when the world is ready."
+                  : "Be the first character to step into Sunbeam Plaza. Anyone else on this server will see you arrive."}
               </p>
-              <button className="primary" onClick={openCreate}>
-                Create the first character
-              </button>
+              {snapshot.inviteOnly && !user ? (
+                <button className="secondary" onClick={() => setModal("auth")}>
+                  Sign in
+                </button>
+              ) : (
+                <button className="primary" onClick={openCreate}>
+                  Create the first character
+                </button>
+              )}
             </div>
           )}
           {snapshot.simulationPaused && (

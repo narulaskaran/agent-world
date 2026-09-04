@@ -19,7 +19,101 @@ export interface AutonomyOptions {
 }
 
 const QUEUE_EXPIRY_MS = 30 * 60_000;
+const MOVE_SPEED_PER_SECOND = 92;
 const newId = () => crypto.randomUUID();
+
+export function positionAt(
+  character: CharacterRow,
+  now: number,
+): { x: number; y: number } {
+  if (
+    character.movementArrivesAt <= character.movementStartedAt ||
+    now >= character.movementArrivesAt
+  )
+    return { x: character.targetX, y: character.targetY };
+  if (now <= character.movementStartedAt)
+    return { x: character.x, y: character.y };
+  const progress =
+    (now - character.movementStartedAt) /
+    (character.movementArrivesAt - character.movementStartedAt);
+  return {
+    x: character.x + (character.targetX - character.x) * progress,
+    y: character.y + (character.targetY - character.y) * progress,
+  };
+}
+
+const settlePosition = async (
+  store: HostedStore,
+  character: CharacterRow,
+  now: number,
+): Promise<void> => {
+  const arrived = now >= character.movementArrivesAt;
+  const pos = positionAt(character, now);
+  const patch: Partial<CharacterRow> = {
+    x: arrived ? character.targetX : pos.x,
+    y: arrived ? character.targetY : pos.y,
+    updatedAt: now,
+  };
+  if (arrived && character.state === "moving") patch.state = "active";
+  if (
+    patch.x === character.x &&
+    patch.y === character.y &&
+    patch.state === undefined
+  )
+    return;
+  await store.updateCharacter(character.id, patch);
+  Object.assign(character, patch);
+};
+
+const startMovement = async (
+  store: HostedStore,
+  character: CharacterRow,
+  dest: { x: number; y: number },
+  now: number,
+  intent: string,
+  locationId: WorldLocationId,
+): Promise<void> => {
+  await settlePosition(store, character, now);
+  const duration = Math.max(
+    800,
+    Math.round(
+      (Math.hypot(dest.x - character.x, dest.y - character.y) /
+        MOVE_SPEED_PER_SECOND) *
+        1000,
+    ),
+  );
+  const patch: Partial<CharacterRow> = {
+    targetX: dest.x,
+    targetY: dest.y,
+    movementStartedAt: now,
+    movementArrivesAt: now + duration,
+    locationId,
+    state: "moving",
+    intent,
+    updatedAt: now,
+  };
+  await store.updateCharacter(character.id, patch);
+  Object.assign(character, patch);
+};
+
+export async function enqueueTick(
+  store: HostedStore,
+  characterId: string,
+  notBefore: number,
+  now: number,
+): Promise<string | null> {
+  return store.enqueueJob({
+    id: newId(),
+    characterId,
+    kind: "tick",
+    payload: {},
+    priority: 10,
+    dedupeKey: "tick",
+    notBefore,
+    expiresAt: notBefore + QUEUE_EXPIRY_MS,
+    createdAt: now,
+  });
+}
 
 const waypointFor = (
   locationId: WorldLocationId,
@@ -174,6 +268,7 @@ const executeTick = async (
   now: number,
 ): Promise<void> => {
   if (character.paused || character.muted) return;
+  await settlePosition(store, character, now);
   const others = (await store.listCharacters()).filter(
     (row) => row.id !== character.id && !row.paused && !row.muted,
   );
@@ -192,20 +287,19 @@ const executeTick = async (
     await startConversation(store, [character, here[0]!], now, true);
     return;
   }
+  await settlePosition(store, character, now);
   if (roll === 2) {
     const location =
       WORLD_LOCATIONS[hashString(`${character.id}:inspect:${now}`) % WORLD_LOCATIONS.length]!;
     const point = waypointFor(location.id, `${character.id}:inspect`);
-    await store.updateCharacter(character.id, {
-      x: point.x,
-      y: point.y,
-      targetX: point.x,
-      targetY: point.y,
-      locationId: location.id,
-      state: "active",
-      intent: `Looking around ${location.name}`,
-      updatedAt: now,
-    });
+    await startMovement(
+      store,
+      character,
+      point,
+      now,
+      `Looking around ${location.name}`,
+      location.id,
+    );
     await store.addMemory({
       id: newId(),
       characterId: character.id,
@@ -226,7 +320,8 @@ const executeTick = async (
     return;
   }
   if (roll === 3) {
-    const location = locationAtPoint(character.x, character.y) ?? WORLD_LOCATIONS[0]!;
+    const here = positionAt(character, now);
+    const location = locationAtPoint(here.x, here.y) ?? WORLD_LOCATIONS[0]!;
     await store.addArtifact({
       id: newId(),
       locationId: location.id,
@@ -235,8 +330,8 @@ const executeTick = async (
       kind: "note",
       title: `From ${character.name}`,
       body: `Left behind while ${character.intent.toLowerCase()}.`,
-      x: character.x,
-      y: character.y,
+      x: here.x,
+      y: here.y,
       createdAt: now,
     });
     await addPublicEvent(store, {
@@ -251,16 +346,14 @@ const executeTick = async (
   const location =
     WORLD_LOCATIONS[hashString(`${character.id}:walk:${now}`) % WORLD_LOCATIONS.length]!;
   const point = waypointFor(location.id, `${character.id}:${now}`);
-  await store.updateCharacter(character.id, {
-    x: point.x,
-    y: point.y,
-    targetX: point.x,
-    targetY: point.y,
-    locationId: location.id,
-    state: "active",
-    intent: `Exploring ${location.name}`,
-    updatedAt: now,
-  });
+  await startMovement(
+    store,
+    character,
+    point,
+    now,
+    `Exploring ${location.name}`,
+    location.id,
+  );
   await addPublicEvent(store, {
     kind: "movement",
     characterId: character.id,
@@ -284,16 +377,14 @@ export async function executeJob(
       const location =
         WORLD_LOCATIONS[hashString(character.id) % WORLD_LOCATIONS.length]!;
       const point = waypointFor(location.id, character.id);
-      await store.updateCharacter(character.id, {
-        x: point.x,
-        y: point.y,
-        targetX: point.x,
-        targetY: point.y,
-        locationId: location.id,
-        state: "active",
-        intent: `Exploring ${location.name}`,
-        updatedAt: now,
-      });
+      await startMovement(
+        store,
+        character,
+        point,
+        now,
+        `Exploring ${location.name}`,
+        location.id,
+      );
       await addPublicEvent(store, {
         kind: "movement",
         characterId: character.id,
@@ -372,17 +463,7 @@ export async function scheduleDueTicks(
   const due = await store.dueCharacterIds(now);
   let enqueued = 0;
   for (const characterId of due) {
-    const id = await store.enqueueJob({
-      id: newId(),
-      characterId,
-      kind: "tick",
-      payload: {},
-      priority: 10,
-      dedupeKey: "tick",
-      notBefore: now,
-      expiresAt: now + QUEUE_EXPIRY_MS,
-      createdAt: now,
-    });
+    const id = await enqueueTick(store, characterId, now, now);
     if (id) enqueued += 1;
   }
   return enqueued;

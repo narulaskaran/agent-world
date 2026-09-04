@@ -371,11 +371,12 @@ class WorldScene extends Phaser.Scene {
       node.setData("character-state", character.state);
       node.setData("speaking", Boolean(character.speech));
       this.tweens.killTweensOf(node);
+      const moving = character.state === "moving";
       this.tweens.add({
         targets: node,
-        x: character.x,
-        y: character.y,
-        duration: 900,
+        x: moving ? character.targetX : character.x,
+        y: moving ? character.targetY : character.y,
+        duration: moving ? 1_600 : 900,
         ease: "Linear",
       });
       (node.getByName("tool") as Phaser.GameObjects.Text | null)?.setVisible(

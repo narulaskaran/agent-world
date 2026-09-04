@@ -65,3 +65,8 @@ CREATE TABLE IF NOT EXISTS operator_alerts (
   detail text,
   created_at bigint NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS viewer_presence (
+  viewer_key text PRIMARY KEY,
+  seen_at bigint NOT NULL
+);

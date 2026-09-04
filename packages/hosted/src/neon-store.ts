@@ -80,6 +80,10 @@ const SCHEMA_STATEMENTS = [
     detail text,
     created_at bigint NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS viewer_presence (
+    viewer_key text PRIMARY KEY,
+    seen_at bigint NOT NULL
+  )`,
 ];
 
 const parsePayload = (value: unknown): Record<string, unknown> => {
@@ -203,6 +207,7 @@ export class NeonStore implements HostedStore {
       "world_artifacts",
       "moderation_reports",
       "cost_entries",
+      "viewer_presence",
       "characters",
     ])
       await sql.query(`DELETE FROM ${table}`);
@@ -588,6 +593,18 @@ export class NeonStore implements HostedStore {
         window_start = CASE WHEN rate_limit_buckets.window_start + ${windowMs} <= ${now} THEN ${now} ELSE rate_limit_buckets.window_start END
       RETURNING count`;
     return Number(rows[0]?.count ?? 1) <= max;
+  }
+
+  async touchPresence(key: string, now: number): Promise<void> {
+    await this.sql()`INSERT INTO viewer_presence (viewer_key, seen_at)
+      VALUES (${key}, ${now})
+      ON CONFLICT (viewer_key) DO UPDATE SET seen_at = ${now}`;
+  }
+
+  async countPresence(since: number): Promise<number> {
+    const rows =
+      await this.sql()`SELECT count(*)::int AS count FROM viewer_presence WHERE seen_at >= ${since}`;
+    return Number(rows[0]?.count ?? 0);
   }
 
   async addAlert(row: AlertRow): Promise<void> {

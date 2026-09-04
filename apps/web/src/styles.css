@@ -871,6 +871,14 @@ select:focus-visible {
   color: #544b42;
   font-size: 13px;
 }
+.admin-lists li {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.admin-lists .button-row {
+  justify-content: flex-start;
+}
 @media (max-width: 900px) {
   .topbar {
     height: auto;

@@ -7,7 +7,7 @@ import {
   locationAtPoint,
 } from "../../shared/src/index.js";
 import { createHandler, isAdmin, parseEnv } from "./handler.js";
-import { executeJob, runAutonomy } from "./jobs.js";
+import { executeJob, positionAt, runAutonomy } from "./jobs.js";
 import { MemoryStore } from "./memory-store.js";
 import { CLAIM_JOB_SQL } from "./store.js";
 import type { HostedDeps, Request as HandlerRequest, Response } from "./handler.js";
@@ -423,6 +423,140 @@ describe("hosted product surfaces", () => {
     expect(imported.statusCode).toBe(201);
     expect(imported.json().name).not.toBe(created.json().name);
     expect(await store.countOwned("user-a")).toBe(2);
+  });
+
+  it("caps accounts at the configured character limit", async () => {
+    const store = new MemoryStore();
+    const sessions = new Map<string, string | null>([["a=1", "user-a"]]);
+    const handler = makeHandler(store, sessions, {
+      env: { ...baseEnv, maxCharactersPerUser: 1 },
+    });
+    const first = await invoke(handler, "/characters", {
+      method: "POST",
+      cookie: "a=1",
+      body: characterInput,
+    });
+    const second = await invoke(handler, "/characters", {
+      method: "POST",
+      cookie: "a=1",
+      body: { ...characterInput, name: "Juniper" },
+    });
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(409);
+  });
+
+  it("blocks character creation when invite-only and the user is not listed", async () => {
+    const store = new MemoryStore();
+    const sessions = new Map<string, string | null>([["a=1", "user-a"]]);
+    const handler = makeHandler(store, sessions, {
+      env: { ...baseEnv, inviteOnly: true, inviteUserIds: ["someone-else"] },
+    });
+    const created = await invoke(handler, "/characters", {
+      method: "POST",
+      cookie: "a=1",
+      body: characterInput,
+    });
+    expect(created.statusCode).toBe(403);
+  });
+
+  it("lets spectators poll state to schedule and drain due ticks", async () => {
+    const store = new MemoryStore();
+    const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
+    await store.updateCharacter(moss.id, { nextDecisionAt: 1_000 });
+    const handler = makeHandler(store, new Map(), { now: () => 5_000 });
+    const state = await invoke(handler, "/state");
+    expect(state.statusCode).toBe(200);
+    const body = state.json();
+    expect(body.snapshot.connectedViewers).toBe(1);
+    expect(body.snapshot.events.length).toBeGreaterThan(0);
+    const row = await store.getCharacter(moss.id);
+    expect(row?.updatedAt).toBe(5_000);
+  });
+
+  it("walks along a persisted movement segment instead of teleporting", async () => {
+    const store = new MemoryStore();
+    const character = await seedCharacter(store, "user-a", "Moss", 1_000);
+    await executeJob(
+      store,
+      {
+        id: "explore",
+        characterId: character.id,
+        kind: "first_mission",
+        payload: { mission: "explore" },
+        priority: 100,
+        dedupeKey: "first_mission",
+        notBefore: 0,
+        expiresAt: 60_000,
+        status: "processing",
+        attemptCount: 1,
+        createdAt: 1_000,
+      },
+      1_000,
+    );
+    const moved = await store.getCharacter(character.id);
+    expect(moved).toBeTruthy();
+    expect(moved!.movementArrivesAt).toBeGreaterThan(moved!.movementStartedAt);
+    expect(moved!.state).toBe("moving");
+    const mid = positionAt(
+      moved!,
+      Math.floor((moved!.movementStartedAt + moved!.movementArrivesAt) / 2),
+    );
+    const arrived = positionAt(moved!, moved!.movementArrivesAt);
+    expect(arrived.x).toBe(moved!.targetX);
+    expect(arrived.y).toBe(moved!.targetY);
+    if (moved!.x !== moved!.targetX)
+      expect(mid.x).not.toBe(moved!.targetX);
+  });
+
+  it("keeps owner directive text out of the public log", async () => {
+    const store = new MemoryStore();
+    const moss = await seedCharacter(store, "user-a", "Moss");
+    const sessions = new Map<string, string | null>([["a=1", "user-a"]]);
+    const handler = makeHandler(store, sessions);
+    const secret = "Secret park rendezvous at dusk";
+    const directed = await invoke(handler, `/characters/${moss.id}/directives`, {
+      method: "POST",
+      cookie: "a=1",
+      body: { mode: "directive", text: secret },
+    });
+    expect(directed.statusCode).toBe(200);
+    const publicEvents = await store.listEvents({
+      limit: 20,
+      viewerCharacterIds: [],
+      isAdmin: false,
+    });
+    expect(publicEvents.some((event) => event.detail?.includes(secret))).toBe(
+      false,
+    );
+  });
+
+  it("accepts artifacts and reports, and lets admins mute", async () => {
+    const store = new MemoryStore();
+    const moss = await seedCharacter(store, "user-a", "Moss");
+    const sessions = new Map<string, string | null>([
+      ["a=1", "user-a"],
+      ["admin=1", "admin-1"],
+    ]);
+    const handler = makeHandler(store, sessions);
+    const artifact = await invoke(handler, `/characters/${moss.id}/artifacts`, {
+      method: "POST",
+      cookie: "a=1",
+      body: { kind: "note", title: "A pebble", body: "Warm from the plaza." },
+    });
+    expect(artifact.statusCode).toBe(201);
+    const reported = await invoke(handler, "/reports", {
+      method: "POST",
+      cookie: "a=1",
+      body: { reason: "too loud in the library", characterId: moss.id },
+    });
+    expect(reported.statusCode).toBe(201);
+    const muted = await invoke(handler, `/admin/characters/${moss.id}/mute`, {
+      method: "POST",
+      cookie: "admin=1",
+      body: { muted: true },
+    });
+    expect(muted.statusCode).toBe(200);
+    expect((await store.getCharacter(moss.id))?.muted).toBe(true);
   });
 });
 

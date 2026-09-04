@@ -5,7 +5,7 @@ import { NeonStore, type NeonSql } from "./neon-store.js";
 export { createHandler, parseEnv, isAdmin, hasCronAccess } from "./handler.js";
 export { MemoryStore } from "./memory-store.js";
 export { NeonStore } from "./neon-store.js";
-export { runAutonomy, executeJob } from "./jobs.js";
+export { runAutonomy, executeJob, enqueueTick, positionAt } from "./jobs.js";
 export { CLAIM_JOB_SQL } from "./store.js";
 
 export function createProductionHandler() {

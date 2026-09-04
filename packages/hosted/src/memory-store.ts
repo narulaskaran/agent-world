@@ -61,6 +61,7 @@ export class MemoryStore implements HostedStore {
   alerts: AlertRow[] = [];
   costs: CostRow[] = [];
   rateLimits = new Map<string, { windowStart: number; count: number }>();
+  presence = new Map<string, number>();
 
   async ensureSchema(): Promise<void> {}
 
@@ -113,6 +114,7 @@ export class MemoryStore implements HostedStore {
       this.artifacts = [];
       this.reports = [];
       this.costs = [];
+      this.presence.clear();
       this.world.simulationPaused = false;
       this.world.pausedAt = 0;
       this.world.serverSpentTodayMicros = 0;
@@ -472,6 +474,17 @@ export class MemoryStore implements HostedStore {
       current.count += 1;
       return true;
     });
+  }
+
+  async touchPresence(key: string, now: number): Promise<void> {
+    await this.locked(() => {
+      this.presence.set(key, now);
+    });
+  }
+
+  async countPresence(since: number): Promise<number> {
+    return [...this.presence.values()].filter((seenAt) => seenAt >= since)
+      .length;
   }
 
   async addAlert(row: AlertRow): Promise<void> {

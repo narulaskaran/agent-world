@@ -224,6 +224,8 @@ export interface HostedStore {
     max: number,
     now: number,
   ): Promise<boolean>;
+  touchPresence(key: string, now: number): Promise<void>;
+  countPresence(since: number): Promise<number>;
   addAlert(row: AlertRow): Promise<void>;
   listAlerts(limit: number): Promise<AlertRow[]>;
   listCosts(limit: number): Promise<CostRow[]>;
