@@ -22,8 +22,24 @@ export function guestEventDetail(
   return text;
 }
 
-export function eventDetailsLabel(summary: string): string {
-  return `See details: ${summary}`;
+export function eventClock(createdAt: number): string {
+  return new Date(createdAt).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Accessible name for See details. Uses the full summary; time + id keep duplicates unique. */
+export function eventDetailsLabel(
+  summary: string,
+  extra?: { createdAt?: number; id?: string },
+): string {
+  const parts = [`See details: ${summary}`];
+  if (extra?.createdAt != null) parts.push(eventClock(extra.createdAt));
+  if (extra?.id) parts.push(extra.id);
+  return parts.length === 1
+    ? parts[0]!
+    : `${parts[0]} · ${parts.slice(1).join(" · ")}`;
 }
 
 /** Shorten hashy display ids; leave ordinary names alone. */

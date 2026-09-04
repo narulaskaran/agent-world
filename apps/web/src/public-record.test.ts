@@ -38,6 +38,25 @@ describe("eventDetailsLabel", () => {
       "See details: Juniper arrived in Agent World.",
     );
   });
+
+  it("keeps identical summaries unique with time and event id", () => {
+    const summary = "From SmB511433 left";
+    const at = Date.UTC(2026, 8, 4, 19, 4, 0);
+    const first = eventDetailsLabel(summary, {
+      createdAt: at,
+      id: "evt-aaa",
+    });
+    const second = eventDetailsLabel(summary, {
+      createdAt: at,
+      id: "evt-bbb",
+    });
+    expect(first).toContain("See details: From SmB511433 left");
+    expect(second).toContain("See details: From SmB511433 left");
+    expect(first).not.toBe(second);
+    expect(first).toContain("evt-aaa");
+    expect(second).toContain("evt-bbb");
+    expect(shortenFeedSummary(summary)).toBe("From SmB left");
+  });
 });
 
 describe("shortDisplayId", () => {

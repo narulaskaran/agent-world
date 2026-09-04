@@ -1254,7 +1254,12 @@ export function App() {
                       </div>
                       {detail && (
                         <details>
-                          <summary aria-label={eventDetailsLabel(item.summary)}>
+                          <summary
+                            aria-label={eventDetailsLabel(item.summary, {
+                              createdAt: item.createdAt,
+                              id: item.id,
+                            })}
+                          >
                             See details
                           </summary>
                           <pre>{detail}</pre>
