@@ -90,6 +90,10 @@ const proxyAuth = async (
     const value = header(request, name);
     if (value) headers.set(name, value);
   }
+  // This is a same-origin server proxy. Authenticate the server-to-server hop
+  // against Neon's own trusted origin instead of forwarding an unregistered
+  // browser origin; OAuth callbacks still use explicit absolute URLs.
+  headers.set("origin", new URL(base).origin);
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : typeof request.body === "string"
