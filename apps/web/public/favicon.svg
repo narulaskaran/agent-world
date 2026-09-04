@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Agent World">
+  <!-- Parchment tile, same chunky stroke language as the park assets. -->
+  <rect width="64" height="64" rx="14" fill="#cbbfa8"/>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="#f4eddb" stroke="#465037" stroke-width="3"/>
+
+  <!-- Grass hill, from the ground/tree palette. -->
+  <path d="M5 50c7-11 16-16 27-16s20 5 27 16v4c0 7-5 12-12 12H17C10 66 5 61 5 54Z" fill="#83ad69" stroke="#465037" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M16 52c3-4 7-6 12-6M40 54c4-3 8-5 13-5" fill="none" stroke="#5f8d56" stroke-width="2" stroke-linecap="round" opacity=".7"/>
+  <circle cx="50" cy="50" r="1.2" fill="#b7cd84" opacity=".8"/>
+
+  <!-- World tree, scaled from assets/world/tree.svg so the canopy is the mark. -->
+  <g transform="translate(6.4,-1.5) scale(0.428)" stroke-linejoin="round">
+    <path d="M52 83c3 20-2 39-13 58h43c-10-19-15-38-12-58Z" fill="#79543c" stroke="#50382e" stroke-width="5"/>
+    <path d="M60 87 43 112m19-21 18 20" fill="none" stroke="#9c7250" stroke-width="5"/>
+    <path d="M14 53c-8-23 14-39 33-31 8-24 47-22 52 4 24 2 28 34 10 45 6 24-24 37-42 25-18 17-51 3-46-20C4 72 2 58 14 53Z" fill="#517b48" stroke="#465037" stroke-width="5"/>
+    <path d="M20 55c7-14 18-20 31-20M67 29c14 0 24 6 30 17M30 75c8-5 14-7 22-7M76 75c9-5 17-11 21-19" fill="none" stroke="#789d58" stroke-width="6" stroke-linecap="round" opacity=".82"/>
+    <path d="m28 43 7-4m47 13 8-5M56 57l7-5M39 84l8-3" fill="none" stroke="#9abb66" stroke-width="4" stroke-linecap="round" opacity=".75"/>
+  </g>
+</svg>
