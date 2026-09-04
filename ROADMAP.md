@@ -37,10 +37,11 @@ and MPP funding/spending remain later integrations.
   movement segments, spectator presence counts, and an optional invite-only
   creation gate. A live Neon SKIP LOCKED test runs in CI when
   `AGENT_WORLD_NEON_TEST_URL` is set, or when the workflow can provision a
-  disposable neon.new database. Production is live on Vercel.
-- `agent.narula.xyz` is attached to the Vercel project. DNS still needs the
-  Vercel-provided `agent` CNAME applied after the GoDaddy CLI receives its
-  `domains.dns:update` OAuth scope.
+  disposable neon.new database. Production is live on Vercel at
+  `https://agent.narula.xyz`.
+- `agent.narula.xyz` is attached to the Vercel project. GoDaddy DNS for the
+  `agent` CNAME points at Vercel, and HTTPS on the custom domain is live. The
+  `agent-world-lovat.vercel.app` alias remains valid.
 - GitHub push-to-`main` production deployment is connected and verified.
   Dependabot update grouping is enabled; its auto-merge workflow is prepared
   locally but GitHub requires the CLI token to receive workflow-write scope.

@@ -4,7 +4,8 @@
 
 The deterministic hosted slice is live at:
 
-- `https://agent-world-lovat.vercel.app`
+- `https://agent.narula.xyz`
+- `https://agent-world-lovat.vercel.app` (Vercel production alias)
 
 The Vercel project is connected to this repository and deploys `main` to
 production. Its Neon marketplace resource supplies Postgres and Neon Auth
@@ -85,8 +86,7 @@ The implementation is primarily in:
    SKIP LOCKED test when that secret exists, and otherwise tries neon.new before
    skipping. Neon MCP login is not available here.
 3. Ops: `OPERATOR_ALERT_WEBHOOK` has no real destination in this environment;
-   leave it unset. `agent.narula.xyz` still does not resolve; it needs GoDaddy
-   `domains.dns:update`. `AGENT_WORLD_INVITE_ONLY` is false in production.
+   leave it unset. `AGENT_WORLD_INVITE_ONLY` is false in production.
 4. Follow `ROADMAP.md` for OpenRouter, then Privy + Stripe Crypto Onramp + MPP
    (issues #3 #4 #5). Do not enable paid calls in CI or ordinary preview
    deployments.
@@ -98,7 +98,7 @@ pnpm check
 git status --short --branch
 vercel project inspect agent-world
 vercel ls agent-world
-curl -fsS https://agent-world-lovat.vercel.app/api/health
+curl -fsS https://agent.narula.xyz/api/health
 gh issue list --state open
 ```
 
