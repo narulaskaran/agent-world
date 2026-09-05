@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "@agent-world/shared";
 
 /** Pitch from the ground plane. Civ-5 overview, not first-person. */
@@ -14,7 +15,14 @@ export const MAX_DISTANCE = 1080;
 
 export const DEFAULT_DISTANCE = 640;
 
+export const CAMERA_FOV = 42;
+export const CAMERA_NEAR = 8;
+export const CAMERA_FAR = 4000;
+
 export const PLAZA_FOCUS = { x: 560, z: 348 };
+
+/** NDC inset so a pawn is fully inside the canvas, not clipped at the edge. */
+export const FRAME_MARGIN = 0.2;
 
 export const DRAG_THRESHOLD_PX = 12;
 export const TOUCH_DRAG_THRESHOLD_PX = 22;
@@ -122,4 +130,78 @@ export function pointerSpan(
   b: { x: number; y: number },
 ): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+export function applyOverviewPose(
+  camera: THREE.PerspectiveCamera,
+  targetX: number,
+  targetZ: number,
+  distance: number,
+) {
+  const offset = cameraOffset(distance);
+  camera.position.set(targetX + offset.x, offset.y, targetZ + offset.z);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(targetX, 10, targetZ);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+}
+
+export function sampleInFrame(
+  sample: { x: number; y: number; z: number },
+  targetX: number,
+  targetZ: number,
+  distance: number,
+  aspect: number,
+  margin = FRAME_MARGIN,
+): boolean {
+  const camera = new THREE.PerspectiveCamera(
+    CAMERA_FOV,
+    Math.max(0.25, aspect),
+    CAMERA_NEAR,
+    CAMERA_FAR,
+  );
+  applyOverviewPose(camera, targetX, targetZ, distance);
+  const ndc = new THREE.Vector3(sample.x, sample.y, sample.z).project(camera);
+  return (
+    ndc.z > -1 &&
+    ndc.z < 1 &&
+    Math.abs(ndc.x) <= 1 - margin &&
+    Math.abs(ndc.y) <= 1 - margin
+  );
+}
+
+/** Keep fixed pitch/yaw; pan + zoom so every sample sits inside the canvas. */
+export function framePoints(
+  samples: Array<{ x: number; y: number; z: number }>,
+  aspect: number,
+): { x: number; z: number; distance: number } {
+  if (!samples.length) {
+    return {
+      x: PLAZA_FOCUS.x,
+      z: PLAZA_FOCUS.z,
+      distance: DEFAULT_DISTANCE,
+    };
+  }
+  const xs = samples.map((sample) => sample.x);
+  const zs = samples.map((sample) => sample.z);
+  const x = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const z = (Math.min(...zs) + Math.max(...zs)) / 2;
+  const fits = (distance: number) =>
+    samples.every((sample) =>
+      sampleInFrame(sample, x, z, distance, aspect, FRAME_MARGIN),
+    );
+  if (fits(DEFAULT_DISTANCE)) {
+    return { x, z, distance: DEFAULT_DISTANCE };
+  }
+  if (!fits(MAX_DISTANCE)) {
+    return { x, z, distance: MAX_DISTANCE };
+  }
+  let lo = DEFAULT_DISTANCE;
+  let hi = MAX_DISTANCE;
+  for (let step = 0; step < 16; step++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) hi = mid;
+    else lo = mid;
+  }
+  return { x, z, distance: hi };
 }

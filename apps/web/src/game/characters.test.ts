@@ -1,18 +1,26 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { LOCATION_WAYPOINTS, type PublicCharacter } from "@agent-world/shared";
-import { cameraOffset, DEFAULT_DISTANCE } from "./camera";
+import {
+  cameraOffset,
+  DEFAULT_DISTANCE,
+  PLAZA_FOCUS,
+  framePoints,
+  sampleInFrame,
+} from "./camera";
 import {
   CHARACTER_HIT_RADIUS,
   characterStandPose,
   createCharacterAvatar,
   createCharacterHitMaterial,
   isCharacterObject,
+  pawnFrameSamples,
 } from "./characters";
 import { TILE_TOP } from "./hex";
 import {
   LANDMARK_FOOTPRINTS,
   clearLandmarkFootprint,
+  courtyardStandZ,
   createLandmarks,
   pointInLandmarkFootprint,
 } from "./landmarks";
@@ -64,7 +72,7 @@ describe("landmark courtyards", () => {
     )!;
     const buried = clearLandmarkFootprint(workshop.x, workshop.z);
     expect(pointInLandmarkFootprint(buried.x, buried.z, workshop)).toBe(false);
-    expect(buried.z).toBeGreaterThan(workshop.z + workshop.halfZ);
+    expect(buried.z).toBeGreaterThanOrEqual(courtyardStandZ(workshop));
   });
 });
 
@@ -76,6 +84,7 @@ describe("living character avatars", () => {
       (item) => item.id === "workshop",
     )!;
     expect(pointInLandmarkFootprint(pose.x, pose.z, workshop)).toBe(false);
+    expect(pose.z).toBeGreaterThanOrEqual(courtyardStandZ(workshop));
   });
 
   it("builds an opaque, pickable pawn tagged with the character id", () => {
@@ -152,5 +161,49 @@ describe("living character avatars", () => {
     const hits = raycaster.intersectObject(avatar.hit, false);
     expect(hits.length).toBeGreaterThan(0);
     expect(CHARACTER_HIT_RADIUS).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe("default / reset living frame", () => {
+  const aspects = [
+    ["1280 desktop", 1280 / 720],
+    ["390 phone", 390 / 700],
+  ] as const;
+
+  it("leaves the Tinker Shed pawn off-screen on a 390 plaza view", () => {
+    const pose = characterStandPose(880, 520);
+    const chest = { x: pose.x, y: pose.y + 20, z: pose.z };
+    expect(
+      sampleInFrame(
+        chest,
+        PLAZA_FOCUS.x,
+        PLAZA_FOCUS.z,
+        DEFAULT_DISTANCE,
+        390 / 700,
+      ),
+    ).toBe(false);
+  });
+
+  it("frames the only living pawn fully on 1280 and 390 canvases", () => {
+    const pose = characterStandPose(880, 520);
+    const samples = pawnFrameSamples(880, 520);
+    for (const [label, aspect] of aspects) {
+      const frame = framePoints(samples, aspect);
+      expect(frame.x, label).toBeCloseTo(pose.x, 0);
+      expect(frame.z, label).toBeCloseTo(pose.z, 0);
+      for (const sample of samples) {
+        expect(
+          sampleInFrame(sample, frame.x, frame.z, frame.distance, aspect),
+          `${label} sample`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("keeps an empty world on the plaza overview", () => {
+    const frame = framePoints([], 390 / 700);
+    expect(frame.x).toBe(PLAZA_FOCUS.x);
+    expect(frame.z).toBe(PLAZA_FOCUS.z);
+    expect(frame.distance).toBe(DEFAULT_DISTANCE);
   });
 });

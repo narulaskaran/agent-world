@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { WORLD_HEIGHT } from "@agent-world/shared";
+import { CAMERA_PITCH } from "./camera";
 import { TILE_TOP } from "./hex";
 
 const SIGN_SPOTS: Array<{ name: string; x: number; z: number }> = [
@@ -6,7 +8,7 @@ const SIGN_SPOTS: Array<{ name: string; x: number; z: number }> = [
   { name: "The Memory Stack", x: 145, z: 653 },
   { name: "Sunbeam Plaza", x: 572, z: 215 },
   { name: "Mossbell Park", x: 875, z: 76 },
-  { name: "Tinker Shed", x: 880, z: 470 },
+  { name: "Tinker Shed", x: 880, z: 445 },
 ];
 
 function std(color: number, extras?: THREE.MeshStandardMaterialParameters) {
@@ -125,7 +127,7 @@ function addLibrary(parent: THREE.Object3D) {
 
 function addWorkshop(parent: THREE.Object3D) {
   const x = 890;
-  const z = 478;
+  const z = 420;
   parent.add(box(72, 28, 50, 0xb08968, x, TILE_TOP + 14, z));
   const roof = new THREE.Mesh(new THREE.ConeGeometry(48, 20, 4), std(0x8a6246));
   roof.position.set(x, TILE_TOP + 38, z);
@@ -180,15 +182,26 @@ function addFountain(parent: THREE.Object3D) {
 /**
  * Solid XZ footprints for landmark buildings. Keep these in sync with the
  * meshes above so living characters can stand in courtyards instead of inside
- * the sheds.
+ * the sheds. `height` is the roof top used for camera-lean clearance.
  */
 export const LANDMARK_FOOTPRINTS = [
-  { id: "cafe", x: 168, z: 118, halfX: 50, halfZ: 36 },
-  { id: "library", x: 210, z: 488, halfX: 44, halfZ: 32 },
-  { id: "workshop", x: 890, z: 478, halfX: 40, halfZ: 28 },
+  { id: "cafe", x: 168, z: 118, halfX: 50, halfZ: 36, height: 66 },
+  { id: "library", x: 210, z: 488, halfX: 44, halfZ: 32, height: 94 },
+  { id: "workshop", x: 890, z: 420, halfX: 40, halfZ: 28, height: 50 },
 ] as const;
 
-export const STAND_CLEARANCE = 12;
+/** Extra ground south of the roof's screen projection so the full pawn reads. */
+export const COURTYARD_PADDING = 40;
+
+export function courtyardStandZ(
+  footprint: (typeof LANDMARK_FOOTPRINTS)[number],
+): number {
+  const lean = footprint.height / Math.tan(CAMERA_PITCH);
+  return Math.min(
+    WORLD_HEIGHT - 48,
+    footprint.z + footprint.halfZ + lean + COURTYARD_PADDING,
+  );
+}
 
 export function pointInLandmarkFootprint(
   x: number,
@@ -201,7 +214,10 @@ export function pointInLandmarkFootprint(
   );
 }
 
-/** Push a board point south (+Z, toward the overview camera) out of buildings. */
+/**
+ * Push a board point south (+Z, toward the overview camera) out of a building
+ * and past its tilted-camera roof coverage.
+ */
 export function clearLandmarkFootprint(
   x: number,
   z: number,
@@ -211,8 +227,10 @@ export function clearLandmarkFootprint(
   for (let step = 0; step < 4; step++) {
     let moved = false;
     for (const footprint of LANDMARK_FOOTPRINTS) {
-      if (!pointInLandmarkFootprint(px, pz, footprint)) continue;
-      pz = footprint.z + footprint.halfZ + STAND_CLEARANCE;
+      const inCorridor = Math.abs(px - footprint.x) <= footprint.halfX + 12;
+      const standZ = courtyardStandZ(footprint);
+      if (!inCorridor || pz >= standZ) continue;
+      pz = standZ;
       moved = true;
     }
     if (!moved) break;

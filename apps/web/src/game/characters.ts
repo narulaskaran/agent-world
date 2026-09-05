@@ -13,6 +13,8 @@ export const CHARACTER_SCALE = 1.2;
 export const CHARACTER_HIT_RADIUS = HEX_SIZE;
 export const CHARACTER_HIT_HEIGHT = 56;
 export const CHARACTER_LABEL_HEIGHT = 50;
+export const PAWN_FRAME_RADIUS = 22;
+export const PAWN_FRAME_TOP = TILE_TOP + 72;
 
 export interface CharacterAvatar {
   group: THREE.Group;
@@ -31,6 +33,25 @@ export function characterStandPose(
 ): { x: number; y: number; z: number } {
   const cleared = clearLandmarkFootprint(x, z);
   return { x: cleared.x, y: TILE_TOP + 0.35, z: cleared.z };
+}
+
+/** Corners used to keep the whole pawn (mesh + name chip) inside the canvas. */
+export function pawnFrameSamples(
+  x: number,
+  z: number,
+): Array<{ x: number; y: number; z: number }> {
+  const pose = characterStandPose(x, z);
+  const r = PAWN_FRAME_RADIUS;
+  return [
+    { x: pose.x, y: pose.y, z: pose.z },
+    { x: pose.x, y: PAWN_FRAME_TOP, z: pose.z },
+    { x: pose.x - r, y: pose.y, z: pose.z },
+    { x: pose.x + r, y: pose.y, z: pose.z },
+    { x: pose.x, y: pose.y, z: pose.z - r },
+    { x: pose.x, y: pose.y, z: pose.z + r },
+    { x: pose.x - r, y: PAWN_FRAME_TOP, z: pose.z - r },
+    { x: pose.x + r, y: PAWN_FRAME_TOP, z: pose.z + r },
+  ];
 }
 
 function cloth(color: number) {
