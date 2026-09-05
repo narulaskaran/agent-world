@@ -435,8 +435,9 @@ export class WorldScene {
     el.addEventListener("pointermove", this.onPointerMove);
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointercancel", this.onPointerUp);
-    el.addEventListener("wheel", this.onWheel, { passive: false });
     el.addEventListener("contextmenu", this.onContextMenu);
+    this.host.addEventListener("wheel", this.onWheel, { passive: false });
+    el.addEventListener("wheel", this.onWheel, { passive: false });
   }
 
   private unbindInput() {
@@ -447,6 +448,7 @@ export class WorldScene {
     el.removeEventListener("pointercancel", this.onPointerUp);
     el.removeEventListener("wheel", this.onWheel);
     el.removeEventListener("contextmenu", this.onContextMenu);
+    this.host.removeEventListener("wheel", this.onWheel);
   }
 
   private onContextMenu = (event: Event) => event.preventDefault();
@@ -454,7 +456,11 @@ export class WorldScene {
   private onWheel = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    this.desiredDistance = applyZoomDelta(this.desiredDistance, event.deltaY);
+    this.desiredDistance = applyZoomDelta(
+      this.desiredDistance,
+      event.deltaY,
+      event.deltaMode,
+    );
   };
 
   private onPointerDown = (event: PointerEvent) => {

@@ -30,10 +30,15 @@ describe("civ camera", () => {
   });
 
   it("zooms with wheel and pinch without flipping past a hard lock", () => {
-    const farther = applyZoomDelta(DEFAULT_DISTANCE, 400);
-    const closer = applyZoomDelta(DEFAULT_DISTANCE, -400);
-    expect(farther).toBeGreaterThan(DEFAULT_DISTANCE);
-    expect(closer).toBeLessThan(DEFAULT_DISTANCE);
+    expect(applyZoomDelta(DEFAULT_DISTANCE, 400, 0)).toBeGreaterThan(
+      DEFAULT_DISTANCE,
+    );
+    expect(applyZoomDelta(DEFAULT_DISTANCE, -400, 0)).toBeLessThan(
+      DEFAULT_DISTANCE,
+    );
+    expect(applyZoomDelta(DEFAULT_DISTANCE, 10, 1)).toBeGreaterThan(
+      applyZoomDelta(DEFAULT_DISTANCE, 10, 0),
+    );
     const pinched = applyPinchZoom(DEFAULT_DISTANCE, 120, 240);
     expect(pinched).toBeCloseTo(DEFAULT_DISTANCE / 2, 5);
     expect(MIN_DISTANCE).toBeLessThan(MAX_DISTANCE);

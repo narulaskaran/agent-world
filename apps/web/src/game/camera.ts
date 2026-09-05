@@ -39,8 +39,14 @@ export function cameraOffset(
   };
 }
 
-export function applyZoomDelta(distance: number, deltaY: number): number {
-  return distance * Math.exp(deltaY * 0.00115);
+export function applyZoomDelta(
+  distance: number,
+  deltaY: number,
+  deltaMode = 0,
+): number {
+  const pixels =
+    deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 800 : deltaY;
+  return distance * Math.exp(pixels * 0.00185);
 }
 
 export function applyPinchZoom(

@@ -24,6 +24,7 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(cors, {
   origin: process.env.AGENT_WORLD_WEB_ORIGIN?.split(",") ?? true,
   methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true,
 });
 await app.register(websocket);
 
@@ -61,11 +62,9 @@ app.patch<{ Params: { name: string } }>(
       world.updateCharacter(request.params.name, parsed.data);
       return { ok: true };
     } catch (error) {
-      return reply
-        .code(404)
-        .send({
-          error: error instanceof Error ? error.message : String(error),
-        });
+      return reply.code(404).send({
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   },
 );
@@ -75,20 +74,16 @@ app.post<{ Params: { name: string } }>(
   async (request, reply) => {
     const parsed = DirectiveSchema.safeParse(request.body);
     if (!parsed.success)
-      return reply
-        .code(400)
-        .send({
-          error: parsed.error.issues[0]?.message ?? "Invalid direction",
-        });
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? "Invalid direction",
+      });
     try {
       world.addDirective(request.params.name, parsed.data);
       return { ok: true };
     } catch (error) {
-      return reply
-        .code(404)
-        .send({
-          error: error instanceof Error ? error.message : String(error),
-        });
+      return reply.code(404).send({
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   },
 );
@@ -100,11 +95,9 @@ app.post<{ Params: { name: string } }>(
       await world.regenerateAvatar(request.params.name);
       return { ok: true };
     } catch (error) {
-      return reply
-        .code(404)
-        .send({
-          error: error instanceof Error ? error.message : String(error),
-        });
+      return reply.code(404).send({
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   },
 );
@@ -116,11 +109,9 @@ app.delete<{ Params: { name: string } }>(
       world.deleteCharacter(request.params.name);
       return reply.code(204).send();
     } catch (error) {
-      return reply
-        .code(404)
-        .send({
-          error: error instanceof Error ? error.message : String(error),
-        });
+      return reply.code(404).send({
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   },
 );
@@ -129,11 +120,9 @@ app.get("/api/admin", async () => world.adminState());
 app.patch("/api/admin", async (request, reply) => {
   const parsed = UpdateWorldSchema.safeParse(request.body);
   if (!parsed.success)
-    return reply
-      .code(400)
-      .send({
-        error: parsed.error.issues[0]?.message ?? "Invalid world settings",
-      });
+    return reply.code(400).send({
+      error: parsed.error.issues[0]?.message ?? "Invalid world settings",
+    });
   world.setServerDailyBudgetMicros(parsed.data.serverDailyBudgetMicros);
   return { ok: true };
 });

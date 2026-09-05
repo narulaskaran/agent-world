@@ -433,6 +433,9 @@ select:focus-visible {
   background: #fff9ed;
   border: 1px solid #c3b394;
   box-shadow: 0 12px 32px rgba(32, 44, 32, 0.22);
+  pointer-events: none;
+}
+.empty-world-copy button {
   pointer-events: auto;
 }
 .empty-world h2 {
