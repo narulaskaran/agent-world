@@ -332,6 +332,7 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
   white-space: normal;
+  z-index: 3;
 }
 .character-label .name-chip,
 .character-label .intent-chip,
