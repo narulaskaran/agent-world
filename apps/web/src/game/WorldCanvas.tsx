@@ -12,12 +12,18 @@ export function WorldCanvas({ snapshot, selectedId, onSelect }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const scene = useRef<WorldScene | null>(null);
   const onSelectRef = useRef(onSelect);
+  const snapshotRef = useRef(snapshot);
+  const selectedRef = useRef(selectedId);
   onSelectRef.current = onSelect;
+  snapshotRef.current = snapshot;
+  selectedRef.current = selectedId;
 
   useEffect(() => {
-    if (!host.current || scene.current) return;
+    if (!host.current) return;
     const world = new WorldScene(host.current, (id) => onSelectRef.current(id));
     scene.current = world;
+    if (snapshotRef.current)
+      world.sync(snapshotRef.current, selectedRef.current);
     return () => {
       world.dispose();
       scene.current = null;

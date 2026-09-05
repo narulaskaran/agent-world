@@ -83,7 +83,8 @@ function addTree(parent: THREE.Object3D, x: number, z: number, scale = 1) {
 
 function addCafe(parent: THREE.Object3D) {
   const x = 168;
-  const z = 155;
+  // North of cafe waypoints so agents stand in the courtyard, not inside the walls.
+  const z = 118;
   parent.add(box(92, 38, 62, 0xc88d6c, x, TILE_TOP + 19, z));
   parent.add(box(100, 6, 70, 0x915d4a, x, TILE_TOP + 40, z));
   const roof = new THREE.Mesh(new THREE.ConeGeometry(62, 22, 4), std(0xb97559));
@@ -112,7 +113,7 @@ function addCafe(parent: THREE.Object3D) {
 
 function addLibrary(parent: THREE.Object3D) {
   const x = 210;
-  const z = 545;
+  const z = 488;
   parent.add(box(78, 52, 58, 0x8a87ad, x, TILE_TOP + 26, z));
   parent.add(box(62, 22, 46, 0x9b98be, x, TILE_TOP + 63, z - 4));
   parent.add(box(42, 16, 32, 0x7d7aa3, x, TILE_TOP + 82, z - 6));
@@ -124,7 +125,7 @@ function addLibrary(parent: THREE.Object3D) {
 
 function addWorkshop(parent: THREE.Object3D) {
   const x = 890;
-  const z = 530;
+  const z = 478;
   parent.add(box(72, 28, 50, 0xb08968, x, TILE_TOP + 14, z));
   const roof = new THREE.Mesh(new THREE.ConeGeometry(48, 20, 4), std(0x8a6246));
   roof.position.set(x, TILE_TOP + 38, z);
@@ -174,6 +175,49 @@ function addFountain(parent: THREE.Object3D) {
     rings.push(ring);
   }
   return rings;
+}
+
+/**
+ * Solid XZ footprints for landmark buildings. Keep these in sync with the
+ * meshes above so living characters can stand in courtyards instead of inside
+ * the sheds.
+ */
+export const LANDMARK_FOOTPRINTS = [
+  { id: "cafe", x: 168, z: 118, halfX: 50, halfZ: 36 },
+  { id: "library", x: 210, z: 488, halfX: 44, halfZ: 32 },
+  { id: "workshop", x: 890, z: 478, halfX: 40, halfZ: 28 },
+] as const;
+
+export const STAND_CLEARANCE = 12;
+
+export function pointInLandmarkFootprint(
+  x: number,
+  z: number,
+  footprint: (typeof LANDMARK_FOOTPRINTS)[number],
+): boolean {
+  return (
+    Math.abs(x - footprint.x) <= footprint.halfX &&
+    Math.abs(z - footprint.z) <= footprint.halfZ
+  );
+}
+
+/** Push a board point south (+Z, toward the overview camera) out of buildings. */
+export function clearLandmarkFootprint(
+  x: number,
+  z: number,
+): { x: number; z: number } {
+  let px = x;
+  let pz = z;
+  for (let step = 0; step < 4; step++) {
+    let moved = false;
+    for (const footprint of LANDMARK_FOOTPRINTS) {
+      if (!pointInLandmarkFootprint(px, pz, footprint)) continue;
+      pz = footprint.z + footprint.halfZ + STAND_CLEARANCE;
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  return { x: px, z: pz };
 }
 
 export function createLandmarks(parent: THREE.Object3D): {

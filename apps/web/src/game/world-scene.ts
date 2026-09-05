@@ -22,13 +22,14 @@ import {
   HEX_SIZE,
   TERRAIN_COLORS,
   TILE_THICKNESS,
-  TILE_TOP,
   hexesCoveringWorld,
 } from "./hex";
+import {
+  CHARACTER_LABEL_HEIGHT,
+  characterStandPose,
+  createCharacterAvatar,
+} from "./characters";
 import { createLandmarks, locationSignAnchors } from "./landmarks";
-
-const SKIN = [0x78bd77, 0x6da7d9, 0xa77ac4, 0xe49a50, 0xd978a5, 0x65b8b0];
-const HAIR = [0x324c3c, 0x3c4770, 0x533a68, 0x70442f, 0x67384e, 0x305c5b];
 
 interface CharacterNode {
   id: string;
@@ -276,111 +277,21 @@ export class WorldScene {
   }
 
   private createCharacter(character: PublicCharacter): CharacterNode {
-    const paletteIndex = Math.abs(character.name.charCodeAt(0)) % SKIN.length;
-    const skin = SKIN[paletteIndex] ?? 0xe8aa70;
-    const hair = HAIR[paletteIndex] ?? 0x4b332c;
-    const cloth = new THREE.Color(character.avatarColor);
-    const group = new THREE.Group();
-    group.position.set(character.x, TILE_TOP, character.y);
-
-    const shadow = new THREE.Mesh(
-      new THREE.CircleGeometry(11, 16),
-      new THREE.MeshBasicMaterial({
-        color: 0x2d382d,
-        transparent: true,
-        opacity: 0.28,
-      }),
-    );
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.y = 0.4;
-    group.add(shadow);
-
-    const selection = new THREE.Mesh(
-      new THREE.RingGeometry(12, 16, 28),
-      new THREE.MeshBasicMaterial({
-        color: 0xfff5a8,
-        transparent: true,
-        opacity: 0.92,
-        side: THREE.DoubleSide,
-      }),
-    );
-    selection.rotation.x = -Math.PI / 2;
-    selection.position.y = 0.55;
-    selection.visible = character.id === this.selectedId;
-    group.add(selection);
-
-    const leftLeg = new THREE.Mesh(
-      new THREE.BoxGeometry(4.2, 10, 4.2),
-      new THREE.MeshStandardMaterial({ color: 0x3f342e, roughness: 0.9 }),
-    );
-    leftLeg.position.set(-3.4, 5, 0);
-    leftLeg.castShadow = true;
-    const rightLeg = leftLeg.clone();
-    rightLeg.position.x = 3.4;
-    group.add(leftLeg, rightLeg);
-
-    const leftArm = new THREE.Mesh(
-      new THREE.BoxGeometry(3.2, 11, 3.2),
-      new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7 }),
-    );
-    leftArm.position.set(-8.2, 16, 0);
-    leftArm.castShadow = true;
-    const rightArm = leftArm.clone();
-    rightArm.position.x = 8.2;
-    group.add(leftArm, rightArm);
-
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(12, 16, 8),
-      new THREE.MeshStandardMaterial({ color: cloth, roughness: 0.72 }),
-    );
-    body.position.y = 18;
-    body.castShadow = true;
-    group.add(body);
-
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(6.4, 14, 12),
-      new THREE.MeshStandardMaterial({ color: skin, roughness: 0.62 }),
-    );
-    head.position.y = 30.5;
-    head.castShadow = true;
-    group.add(head);
-
-    const hairCap = new THREE.Mesh(
-      new THREE.SphereGeometry(6.2, 12, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: hair, roughness: 0.8 }),
-    );
-    hairCap.position.y = 32.4;
-    group.add(hairCap);
-
-    const tool = new THREE.Mesh(
-      new THREE.BoxGeometry(5, 5, 5),
-      new THREE.MeshStandardMaterial({ color: 0xd7a04a, roughness: 0.45 }),
-    );
-    tool.position.set(0, 42, 0);
-    tool.visible = character.toolActive;
-    group.add(tool);
-
-    const hit = new THREE.Mesh(
-      new THREE.CylinderGeometry(20, 20, 44, 10),
-      new THREE.MeshBasicMaterial({ visible: false }),
-    );
-    hit.position.y = 20;
-    hit.userData.characterId = character.id;
-    group.add(hit);
-
+    const avatar = createCharacterAvatar(character);
+    avatar.selection.visible = character.id === this.selectedId;
     const label = document.createElement("div");
     label.className = "character-label";
 
     return {
       id: character.id,
-      group,
-      hit,
-      selection,
-      leftLeg,
-      rightLeg,
-      leftArm,
-      rightArm,
-      tool,
+      group: avatar.group,
+      hit: avatar.hit,
+      selection: avatar.selection,
+      leftLeg: avatar.leftLeg,
+      rightLeg: avatar.rightLeg,
+      leftArm: avatar.leftArm,
+      rightArm: avatar.rightArm,
+      tool: avatar.tool,
       visualX: character.x,
       visualZ: character.y,
       fromX: character.x,
@@ -573,8 +484,13 @@ export class WorldScene {
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = [...this.nodes.values()].map((node) => node.hit);
-    const found = this.raycaster.intersectObjects(hits, false)[0];
+    const pickables = [...this.nodes.values()].flatMap((node) => [
+      node.hit,
+      node.group,
+    ]);
+    const found = this.raycaster
+      .intersectObjects(pickables, true)
+      .find((hit) => typeof hit.object.userData.characterId === "string");
     const id = found?.object.userData.characterId;
     this.onSelect(typeof id === "string" ? id : null);
   }
@@ -664,7 +580,8 @@ export class WorldScene {
       node.visualX = node.fromX + (node.toX - node.fromX) * t;
       node.visualZ = node.fromZ + (node.toZ - node.fromZ) * t;
       const bob = node.moving ? Math.abs(Math.sin(time / 85)) * 1.4 : 0;
-      node.group.position.set(node.visualX, TILE_TOP + bob, node.visualZ);
+      const pose = characterStandPose(node.visualX, node.visualZ);
+      node.group.position.set(pose.x, pose.y + bob, pose.z);
       const dx = node.toX - node.fromX;
       const dz = node.toZ - node.fromZ;
       if (node.moving && (Math.abs(dx) > 0.4 || Math.abs(dz) > 0.4)) {
@@ -677,7 +594,12 @@ export class WorldScene {
       node.rightArm.rotation.x = stride * 0.55;
       const pulse = 1 + Math.sin(time / 220) * 0.06;
       if (node.selection.visible) node.selection.scale.set(pulse, pulse, pulse);
-      this.placeLabel(node.label, node.visualX, 46, node.visualZ);
+      this.placeLabel(
+        node.label,
+        pose.x,
+        pose.y + CHARACTER_LABEL_HEIGHT,
+        pose.z,
+      );
     }
     for (const sign of this.signLabels) {
       const x = Number(sign.dataset.x);
