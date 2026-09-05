@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
 import {
+  CAMERA_FAR,
+  CAMERA_FOV,
+  CAMERA_NEAR,
   DEFAULT_DISTANCE,
   DRAG_THRESHOLD_PX,
   MAX_DISTANCE,
@@ -12,6 +15,7 @@ import {
   applyZoomDelta,
   cameraOffset,
   clamp,
+  framePoints,
   isDragGesture,
   panFromScreenDelta,
   pointerSpan,
@@ -28,6 +32,7 @@ import {
   CHARACTER_LABEL_HEIGHT,
   characterStandPose,
   createCharacterAvatar,
+  pawnFrameSamples,
 } from "./characters";
 import { createLandmarks, locationSignAnchors } from "./landmarks";
 
@@ -93,6 +98,8 @@ export class WorldScene {
   private onSelect: (id: string | null) => void;
   private host: HTMLElement;
   private resizeObserver: ResizeObserver;
+  private userMovedCamera = false;
+  private framedKey = "";
 
   constructor(host: HTMLElement, onSelect: (id: string | null) => void) {
     this.host = host;
@@ -102,7 +109,12 @@ export class WorldScene {
     this.scene.background = new THREE.Color(0xd7e3ee);
     this.scene.fog = new THREE.Fog(0xe7dcc6, 920, 1880);
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 8, 4000);
+    this.camera = new THREE.PerspectiveCamera(
+      CAMERA_FOV,
+      1,
+      CAMERA_NEAR,
+      CAMERA_FAR,
+    );
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -147,9 +159,10 @@ export class WorldScene {
   }
 
   resetCamera() {
-    this.desiredTarget.set(PLAZA_FOCUS.x, 0, PLAZA_FOCUS.z);
-    this.desiredDistance = DEFAULT_DISTANCE;
+    this.userMovedCamera = false;
+    this.framedKey = "";
     this.interacting = false;
+    this.applyLivingFrame(false);
   }
 
   dispose() {
@@ -204,6 +217,35 @@ export class WorldScene {
       node.tool.visible = character.toolActive;
       this.renderCharacterLabel(node, character, selectedId);
     }
+    const key = snapshot.characters
+      .map((character) => character.id)
+      .sort()
+      .join(",");
+    if (!this.userMovedCamera && key !== this.framedKey) {
+      this.applyLivingFrame(true);
+    }
+  }
+
+  private livingFrameSamples() {
+    const characters = this.snapshot?.characters ?? [];
+    return characters.flatMap((character) => {
+      const x = character.state === "moving" ? character.targetX : character.x;
+      const z = character.state === "moving" ? character.targetY : character.y;
+      return pawnFrameSamples(x, z);
+    });
+  }
+
+  private applyLivingFrame(immediate: boolean) {
+    const aspect =
+      Math.max(1, this.host.clientWidth) / Math.max(1, this.host.clientHeight);
+    const frame = framePoints(this.livingFrameSamples(), aspect);
+    this.desiredTarget.set(frame.x, 0, frame.z);
+    this.desiredDistance = frame.distance;
+    this.framedKey = (this.snapshot?.characters ?? [])
+      .map((character) => character.id)
+      .sort()
+      .join(",");
+    if (immediate) this.applyCamera(true);
   }
 
   private addLights() {
@@ -375,6 +417,7 @@ export class WorldScene {
       event.deltaY,
       event.deltaMode,
     );
+    this.userMovedCamera = true;
   };
 
   private onPointerDown = (event: PointerEvent) => {
@@ -419,6 +462,7 @@ export class WorldScene {
       );
       this.pointerMoved = true;
       this.suppressClick = true;
+      this.userMovedCamera = true;
       return;
     }
     if (!this.panOrigin || this.pointers.size !== 1) return;
@@ -426,6 +470,7 @@ export class WorldScene {
     const dy = event.clientY - this.panOrigin.y;
     if (isDragGesture(dx, dy, this.dragThreshold)) {
       this.pointerMoved = true;
+      this.userMovedCamera = true;
       this.renderer.domElement.classList.add("is-panning");
       const pan = panFromScreenDelta(
         dx,
@@ -501,6 +546,7 @@ export class WorldScene {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    if (!this.userMovedCamera) this.applyLivingFrame(true);
   }
 
   private applyCamera(immediate = false) {

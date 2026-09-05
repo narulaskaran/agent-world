@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "@agent-world/shared";
 import {
+  CAMERA_FOV,
   CAMERA_PITCH,
   DEFAULT_DISTANCE,
   DRAG_THRESHOLD_PX,
+  FRAME_MARGIN,
   MAX_DISTANCE,
   MIN_DISTANCE,
   PLAZA_FOCUS,
   applyPinchZoom,
   applyZoomDelta,
   cameraOffset,
+  framePoints,
   isDragGesture,
   panFromScreenDelta,
   pointerSpan,
@@ -80,6 +83,22 @@ describe("civ camera", () => {
     expect(next).toBeGreaterThan(DEFAULT_DISTANCE);
     expect(PLAZA_FOCUS.x).toBeGreaterThan(WORLD_WIDTH * 0.4);
     expect(PLAZA_FOCUS.z).toBeGreaterThan(WORLD_HEIGHT * 0.3);
+  });
+
+  it("does not change the Civ overview pitch or FOV when framing pawns", () => {
+    expect((CAMERA_PITCH * 180) / Math.PI).toBeCloseTo(52, 5);
+    expect(CAMERA_FOV).toBe(42);
+    expect(FRAME_MARGIN).toBeGreaterThan(0);
+    const frame = framePoints(
+      [
+        { x: 880, y: 20, z: 530 },
+        { x: 900, y: 70, z: 550 },
+      ],
+      390 / 700,
+    );
+    expect(frame.x).toBeGreaterThan(800);
+    expect(frame.distance).toBeGreaterThanOrEqual(DEFAULT_DISTANCE);
+    expect(frame.distance).toBeLessThanOrEqual(MAX_DISTANCE);
   });
 });
 
