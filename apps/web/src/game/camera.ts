@@ -16,7 +16,8 @@ export const DEFAULT_DISTANCE = 640;
 
 export const PLAZA_FOCUS = { x: 560, z: 348 };
 
-export const DRAG_THRESHOLD_PX = 7;
+export const DRAG_THRESHOLD_PX = 12;
+export const TOUCH_DRAG_THRESHOLD_PX = 22;
 
 export const PAN_BOUNDS = {
   minX: 80,

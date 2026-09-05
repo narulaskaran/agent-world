@@ -1187,7 +1187,8 @@ select:focus-visible {
     right: 8px;
     bottom: 8px;
     width: auto;
-    max-height: min(70dvh, 520px);
+    z-index: 45;
+    max-height: min(58dvh, 520px);
   }
   .modal-backdrop {
     padding: 12px;

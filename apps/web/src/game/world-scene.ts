@@ -2,10 +2,12 @@ import * as THREE from "three";
 import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
 import {
   DEFAULT_DISTANCE,
+  DRAG_THRESHOLD_PX,
   MAX_DISTANCE,
   MIN_DISTANCE,
   PAN_BOUNDS,
   PLAZA_FOCUS,
+  TOUCH_DRAG_THRESHOLD_PX,
   applyPinchZoom,
   applyZoomDelta,
   cameraOffset,
@@ -84,6 +86,7 @@ export class WorldScene {
   private pinchOrigin: { span: number; distance: number } | null = null;
   private pointerMoved = false;
   private suppressClick = false;
+  private dragThreshold = DRAG_THRESHOLD_PX;
   private snapshot: WorldSnapshot | null = null;
   private selectedId: string | null = null;
   private onSelect: (id: string | null) => void;
@@ -358,7 +361,7 @@ export class WorldScene {
     group.add(tool);
 
     const hit = new THREE.Mesh(
-      new THREE.CylinderGeometry(14, 14, 40, 8),
+      new THREE.CylinderGeometry(20, 20, 44, 10),
       new THREE.MeshBasicMaterial({ visible: false }),
     );
     hit.position.y = 20;
@@ -470,6 +473,10 @@ export class WorldScene {
     this.pointerMoved = false;
     this.suppressClick = false;
     this.interacting = true;
+    this.dragThreshold =
+      event.pointerType === "touch"
+        ? TOUCH_DRAG_THRESHOLD_PX
+        : DRAG_THRESHOLD_PX;
     if (this.pointers.size === 1) {
       this.panOrigin = {
         x: event.clientX,
@@ -506,7 +513,7 @@ export class WorldScene {
     if (!this.panOrigin || this.pointers.size !== 1) return;
     const dx = event.clientX - this.panOrigin.x;
     const dy = event.clientY - this.panOrigin.y;
-    if (isDragGesture(dx, dy)) {
+    if (isDragGesture(dx, dy, this.dragThreshold)) {
       this.pointerMoved = true;
       this.renderer.domElement.classList.add("is-panning");
       const pan = panFromScreenDelta(
@@ -540,7 +547,11 @@ export class WorldScene {
         start &&
         !this.suppressClick &&
         !this.pointerMoved &&
-        !isDragGesture(event.clientX - start.x, event.clientY - start.y)
+        !isDragGesture(
+          event.clientX - start.x,
+          event.clientY - start.y,
+          this.dragThreshold,
+        )
       ) {
         this.pick(event.clientX, event.clientY);
       }

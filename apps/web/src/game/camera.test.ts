@@ -62,6 +62,7 @@ describe("civ camera", () => {
     expect(isDragGesture(2, 2)).toBe(false);
     expect(isDragGesture(DRAG_THRESHOLD_PX, 0)).toBe(true);
     expect(isDragGesture(0, DRAG_THRESHOLD_PX + 1)).toBe(true);
+    expect(isDragGesture(10, 10, 22)).toBe(false);
   });
 
   it("pans the board with the pointer instead of orbiting pitch", () => {
