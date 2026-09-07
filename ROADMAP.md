@@ -96,14 +96,19 @@ Decide these before selecting services or changing the schema:
    configuration for this Vite + Vercel Functions topology.
 3. Which Vercel-compatible background-job, realtime, and observability services
    fit alongside Neon?
-4. Does each character spend directly from its owner's wallet, or does a
-   platform wallet pay while the app maintains user balances? Do not blur these
-   two economic models.
+4. **Decided for v1:** each user owns one Privy embedded wallet. Agent World has
+   a separately consented, broadly authorized app signer; its backend may use
+   that signer only to pay active registered MPP tools. There is no platform
+   wallet or pooled user balance.
 5. Which chain and asset will Privy, Stripe Crypto Onramp, Tempo, and the MPP
    endpoints all support? USDC on Tempo is the desired path, not yet a verified
    production integration.
-6. Define production per-action, per-character/user, and global spend caps,
-   funding rules, withdrawal/recovery behavior, and admin roles.
+6. **Decided for v1:** one aggregate per-user daily USD spend limit across all
+   of the user's agents and wallet payment operations, default `$0.20`, reset at
+   00:00 UTC, and user-overridable after authenticated confirmation. A change
+   applies only to new reservations; v1 has no separate product maximum. Funding
+   rules, withdrawal/recovery behavior, admin roles, alerts, and rollout still
+   need implementation-time decisions.
 
 Re-verify current Vercel, Privy, Onramp, and provider capabilities rather than
 relying on this dated planning snapshot.
@@ -166,18 +171,34 @@ relying on this dated planning snapshot.
 
 - Provision or associate exactly one Privy wallet with each authenticated user.
   Store only provider IDs, public addresses, and necessary metadata in Postgres.
-- Keep signing/delegation authority server-side under Privy's supported policy.
-  Never expose private keys, signing tokens, or unrestricted wallet actions to
-  the browser, model context, logs, or database.
+- Privy manages the wallet key material. Keep Agent World's separate
+  authorization key only in managed server secrets. For v1 the app signer is
+  intentionally broad at the Privy layer; the backend signing service is the
+  authorization boundary. Never expose keys, signing tokens, or generic wallet
+  actions to the browser, model context, logs, tool code, or database.
 - Verify the supported Stripe Crypto Onramp path into the exact wallet, chain,
   and asset before building the balance UI. Display fiat value without implying
   that virtual budget accounting is an onchain balance.
-- Define who authorizes autonomous MPP spend and how that authorization can be
-  capped, paused, revoked, and audited. The model never controls payment policy.
+- After explicit owner consent, the backend may authorize payments only for
+  active registered MPP tools. Enforce the user's aggregate daily limit,
+  runtime pauses, revocation, and audit trail before every signature. The model
+  never supplies a recipient, transaction, wallet, or payment policy.
+- Route every signature through one deny-by-default server signing gateway. It
+  is the only module/deployment identity allowed to access the Agent World
+  authorization key or Privy signing APIs; admins, jobs, models, tool adapters,
+  and public handlers can request only typed registered-tool payments and cannot
+  submit raw transactions.
 - Retain atomic reservations before network calls and settle from verified
   payment receipts. Add idempotency so retries cannot double-pay.
-- Keep the paid endpoint allowlist. Treat conversation, memory, and tool output
-  as untrusted observations that cannot alter wallet policy or spend limits.
+- Replace the fixed paid endpoint allowlist with reviewed, version-controlled
+  tool manifests deployed into an operational hosted registry. Each manifest
+  closes the tool-input schema, request and amount derivation, one-operation
+  maximum, origin/route, recipient policy, chain, asset, and expected MPP
+  challenge. The backend constructs the request and validates the live payment
+  challenge; untrusted tool output cannot set payment fields. Newly reviewed and
+  sandbox-verified tools automatically become available to existing users within
+  their current daily limit. Tools cannot self-register; conversation, memory,
+  and tool output cannot modify the registry or spend limits.
 - Test onboarding, wallet failure/recovery, insufficient funds, concurrent
   spend, revoked authorization, receipt mismatch, and user deletion.
 
@@ -211,8 +232,9 @@ relying on this dated planning snapshot.
 6. Use a separate test wallet and the smallest explicit cap for the first paid
    end-to-end call. Paid tests require deliberate approval; never couple them to
    CI or ordinary preview deployments.
-7. Start invite-only with conservative global caps and monitoring before opening
-   character creation more broadly.
+7. Start invite-only with the `$0.20` per-user default, conservative alerts, and
+   monitoring before opening character creation more broadly. Global controls
+   are emergency pauses, not an additional user-facing spend quota.
 
 ## Acceptance criteria for the hosted milestone
 
@@ -229,16 +251,20 @@ relying on this dated planning snapshot.
 - Funding, proposed/completed payments, failures, receipts, remaining onchain
   balance, and app-level budget are understandable and correctly distinguished.
 - Deterministic CI is green, production dependencies are observable, and an
-  operator can pause simulation and all spending immediately.
+  operator can immediately block new provisioning, reservations, onramp
+  sessions, and signer use. Already submitted credentials or transactions
+  cannot be retracted and must enter reconciliation.
 
 ## Later product work
 
-After the deterministic hosted gate is proven, add model-backed behavior through
-OpenRouter with explicit model, token, timeout, and logging controls. Then add
-one server-provisioned Privy wallet per user, Stripe Crypto Onramp funding into
-the supported chain/asset, and MPP payments authorized by server-side policy.
-Only after those integrations are safe should we expand into richer locations
-and group interactions, construction and persistent world improvements,
-reputation and an economy, third-party allowlisted paid tools, mobile layout,
-moderation, private conversations, export/recovery policy, and multiple
-characters per user.
+After the deterministic hosted gate is proven, implement the already-decided v1
+payment architecture in separate reviewed stages: model-backed behavior through
+OpenRouter; one user-owned Privy wallet per authenticated user; the broadly
+authorized app signer with backend-only MPP registry enforcement; Stripe Crypto
+Onramp into the verified chain/asset; and durable MPP payment reconciliation.
+These are approved design directions, not currently implemented capabilities or
+approval to enable production funding/spend. Only after those integrations are
+safe should we expand into richer locations and group interactions,
+construction and persistent world improvements, reputation and an economy,
+broader paid-tool categories, mobile layout, moderation, private conversations,
+and multiple characters per user.
