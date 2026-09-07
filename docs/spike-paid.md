@@ -17,13 +17,32 @@ Keep CI, ordinary Preview, and default Production deterministic. Live keys belon
 | `AGENT_WORLD_LIVE_MPP` | `false` (already) | Onchain MPP 402 payments. |
 | `AGENT_WORLD_LIVE_ONRAMP` | unset / `false` | Stripe Crypto Onramp session creation. |
 | `simulation_paused` | existing admin pause | Stops hosted jobs; **not** a spend kill switch today. |
-| Proposed `AGENT_WORLD_SPEND_PAUSED` | unset / `false` | Immediate halt of model + onramp + MPP regardless of job pause. |
+| Proposed spend-paused bit | off | Runtime/DB flag (not Vercel env) so operators can halt model + onramp + MPP **without redeploy**. |
 
 **CI / Preview:** flags false, secrets absent, tests use deterministic fallbacks and in-memory/SQLite/Neon-without-spend. Do not set live keys on Preview “to try it.” First live calls need a dedicated Production (or explicitly approved) wallet, smallest cap, and human approval ([ROADMAP.md](../ROADMAP.md) §7.6).
 
-**Kill switch:** admin pause plus env flags. An operator must be able to stop simulation **and** all spending without a code deploy (set flags in Vercel and redeploy, or add a DB flag read on every paid call).
+**Fail closed:** flag off ⇒ deterministic, no vendor call. Flag on + missing secret or failed allowlist check ⇒ **hard fail** (no network spend, no “looks live” fallback). Never spend because a secret was empty.
+
+**Kill switch:** `simulation_paused` stops jobs only. QA requires pausing simulation **and** all spending **without redeploy**. That needs a runtime flag read on every paid/model/onramp call (DB column or equivalent), not Vercel env + redeploy.
 
 Existing `redact()` covers cookie/authorization/secret/token/key/email. Extend it for prompts, completions, wallet secrets, onramp client secrets, and MPP credentials before any live path.
+
+---
+
+## QA locked risk checklist
+
+QA owns the full checklist. This spike maps each locked item to #3 / #4 / #5: **satisfies** (current hosted code or the issue’s required design) vs **open** (must be true at implement; not true today, or a human decision remains).
+
+| # | Locked item | #3 OpenRouter | #4 Privy | #5 Onramp + MPP |
+| --- | --- | --- | --- | --- |
+| 1 | CI / previews stay deterministic — no live OpenRouter, Privy spend, or Stripe Onramp in `pnpm check` or preview deploys | **Satisfies today:** hosted jobs never call OpenRouter; `.github/workflows/check.yml` has no model secrets. **Implement must keep:** `AGENT_WORLD_LIVE_MODELS` unset in CI and ordinary Preview; no `OPENROUTER_API_KEY` there. | **Satisfies today:** no Privy client/server in repo. **Implement must keep:** no live `wallets().create` in `pnpm check` or Preview; mock only. #4 is provisioning, not spend — still no live Privy in CI/Preview. | **Satisfies today:** hosted never signs 402s or creates onramp sessions; local live path is `AGENT_WORLD_LIVE_MPP=false` in tests. **Implement must keep:** both live flags off in CI/Preview; no Stripe/MPP secrets on those envs. |
+| 2 | Paid / model calls require explicit env flags + server allowlist; missing secrets = hard fail closed, not silent spend | **Open at implement.** Design: `AGENT_WORLD_LIVE_MODELS=true` **and** key present **and** model ∈ `MODEL_OPTIONS`. Flag off ⇒ deterministic (not spend). Flag on + missing key ⇒ hard fail, do **not** fall through to a fake “live” success. Local `PaidServices` today falls back whenever `LIVE_MPP` is false; hosted must not treat a missing OpenRouter key as a successful model tick. | **Open at implement.** Provisioning needs an explicit live-wallet gate (or Production-only). Missing `PRIVY_APP_SECRET` / signer key ⇒ fail closed, no wallet row that looks real. No browser allowlist of wallet actions — there should be **no** public signing API. | **Open at implement.** Independent flags `AGENT_WORLD_LIVE_ONRAMP` / `AGENT_WORLD_LIVE_MPP` plus server endpoint allowlist (Tempo USDC charge only; hosts enumerated in code). Missing Stripe or signer secrets ⇒ hard fail, never a 402 sign or onramp session. Local `budgeted()` fake-spend when live is false is the **deterministic** path, not a missing-secret live path. |
+| 3 | Wallet keys / signing / LLM tokens never reach the browser, prompts, logs, or DB rows | **Open at implement** (policy is in the issue). Server-only key; log usage/latency/model id only. Do not persist prompts, completions, reasoning, or `OPENROUTER_API_KEY`. Today’s `redact()` does not cover prompt/completion bodies. | **Open at implement.** Store provider ids + public address only. Never persist `PRIVY_APP_SECRET`, authorization private keys, or signing JWTs. Public address may be shown to the owner; not in model context. | **Open at implement.** `STRIPE_SECRET_KEY` / webhook secret / MPP credentials / `Payment` authorization headers never in client, prompts, logs, or `cost_entries.metadata` beyond receipt ids. Onramp `client_secret` is session-scoped to the owner’s browser widget only — not logged, not in DB. |
+| 4 | Auth boundaries: spectator read-only; owner can’t mutate another user’s character; admin gated by allowlist | **Satisfies today** for hosted HTTP: public reads; mutations use Neon session `owner_id`; admin is `AGENT_WORLD_ADMIN_USER_IDS`. **Implement must not regress:** model calls run as server jobs for an **owned** character, not a client-supplied id. Model output cannot grant admin or cross-user mutate. | **Satisfies today** for characters; **open for wallet routes.** Provision/read wallet only for `sessionUserId`; unique one wallet per Neon user. Spectators see no signing surface. Admin allowlist unchanged — admin is not unrestricted wallet control unless explicitly designed. | **Open at implement** for money routes. Onramp session and MPP spend must use the authenticated owner’s Privy address only (never client-supplied). Cross-user character mutate stays forbidden; paying a tool must not become a mutate. Admin budget/pause stay allowlisted (`/admin/*`). |
+| 5 | Atomic spend caps + kill switch: pause simulation **and** all spending without redeploy; retries don’t double-pay | **Partial / open.** Local SQLite `reserveCost` caps inference micros; hosted `HostedStore` **lists** `cost_entries` but cannot reserve. Kill switch: `simulation_paused` stops jobs (including future model ticks) **without redeploy**, but does **not** stop a live HTTP call already in flight, and env flags require redeploy. Need a runtime spend-pause bit read before every OpenRouter call. Idempotency: one reservation per job attempt; no double charge to virtual budget on retry. OpenRouter API-key path has no onchain double-pay, but virtual ledger still must not double-count. | **Open.** #4 should not spend. Kill switch must also block **new wallet provisioning** and any later signer use. No atomic payment yet; unique `(owner_id)` prevents two wallets. Server signer + Privy policy are the future spend brake; they are not a sim-pause. | **Partial / open.** Local `budgeted()` is atomic reserve → call → settle/release; retries can still double-pay **onchain** if a 402 was signed and the job retries without recording challenge/receipt ids — hosted must persist idempotency keys. Caps: per-action / per-character / global exist as **virtual** fields; hosted reservation API missing. Kill switch **without redeploy** is **not** implemented for spend: add `world_state` spend-paused (or equivalent) consulted before onramp create and before `mppx.fetch`. `simulation_paused` alone is insufficient if a paid worker is already past the pause check. |
+| 6 | Deliberate paid test path only (separate test wallet, smallest cap) — never coupled to CI | **Open as process.** `pnpm check` must stay model-free. First live OpenRouter call: Production (or explicitly approved env), tiny `max_tokens` / micros cap, human approval. No GitHub Actions secret for `OPENROUTER_API_KEY`. | **Open as process.** First live `wallets().create` uses a throwaway Privy app / test user, not CI. Ordinary Preview must not mint real wallets. | **Open as process** ([ROADMAP.md](../ROADMAP.md) §7.6). Separate test wallet, smallest onramp amount, smallest MPP cap. Never `AGENT_WORLD_LIVE_MPP=true` in CI or ordinary Preview. Human sandbox proof of Tempo USDC **before** enabling hosted spend. |
+
+**Fail-closed vs deterministic (item 2):** these are different states. Deterministic fallback is the **default** when live flags are false (CI, Preview, today’s production). Hard-fail-closed is when an operator **enabled** a live flag but secrets/allowlist/caps are missing or pause is on — then do not call the vendor and do not write a successful live cost row.
 
 ---
 
@@ -44,7 +63,7 @@ Existing `redact()` covers cookie/authorization/secret/token/key/email. Extend i
 | --- | --- |
 | `OPENROUTER_API_KEY` | Already reserved in `.env.example`. Never browser. |
 | `OPENROUTER_MODEL` | Optional default; character `model` must still be in `MODEL_OPTIONS`. |
-| `AGENT_WORLD_LIVE_MODELS` | Must be `true` **and** key present to leave deterministic fallback. |
+| `AGENT_WORLD_LIVE_MODELS` | Off ⇒ deterministic. On + key + allowlisted model ⇒ live call. On without key ⇒ hard fail (QA item 2). |
 | Optional `AGENT_WORLD_MODEL_TIMEOUT_MS` | Cap below function duration. |
 
 Do not put the key in Preview or GitHub Actions.
@@ -59,7 +78,7 @@ Do not put the key in Preview or GitHub Actions.
 
 ### What stays deterministic
 
-Hosted `jobs.ts` is fully heuristic today (no `PaidServices`). If the flag/key is missing, keep that path. `pnpm check` must not hit OpenRouter.
+Hosted `jobs.ts` is fully heuristic today (no `PaidServices`). `AGENT_WORLD_LIVE_MODELS` false or unset ⇒ keep that path (`pnpm check` must not hit OpenRouter). Flag true without `OPENROUTER_API_KEY` ⇒ hard fail that job, not a silent deterministic success labeled as live.
 
 ### Dependencies
 
@@ -73,7 +92,7 @@ Neon Auth is live. No Privy/Stripe needed. Blocked on: reservation port to Postg
 
 ### QA risks (short)
 
-No live key in CI/Preview; flag off ⇒ identical deterministic ticks; keys never in `/api/state` or events; kill switch stops new completions.
+Checklist: **1** hold (no OpenRouter in CI/Preview today). **2** fail-closed if flag on without key — not implemented. **3** redact/prompt rules — not implemented. **4** inherit hosted auth; don’t take character id from the client for completions. **5** hosted `reserveCost` + runtime spend pause — missing. **6** no CI key; first live call is manual.
 
 ---
 
@@ -121,7 +140,7 @@ Neon Auth live. Blocks #5. Independent of OpenRouter (separate review). Need a `
 
 ### QA risks (short)
 
-No keys in client bundle or logs; cannot mint a second wallet for the same user; Preview does not call Privy; server signer cannot exceed Privy policy.
+Checklist: **1** no Privy in CI/Preview today. **2** provisioning gate + fail-closed without secrets — not implemented. **3** keys/signer never in browser/DB — design required. **4** wallet routes must use Neon session owner, not a client owner id. **5** no spend in #4; pause must still block provisioning/signing. **6** first live wallet is manual, not CI.
 
 ---
 
@@ -183,7 +202,7 @@ Blocked on #4 (destination wallet + server signer). OpenRouter API-key path (#3)
 
 ### QA risks (short)
 
-No Stripe/Privy/MPP secrets in CI/Preview; concurrent ticks cannot double-pay; receipt address/chain/asset must match the user’s wallet; kill switch stops onramp + 402 signing; virtual budget ≠ chain balance.
+Checklist: **1** no Onramp/MPP in CI/Preview today. **2** live flags + allowlist + fail-closed — not implemented on hosted. **3** receipts only, no secrets in metadata. **4** onramp/MPP bound to session owner’s Privy address. **5** hosted atomic reserve + challenge/receipt idempotency + **spend pause without redeploy** — missing. **6** ROADMAP §7.6 separate test wallet; Tempo USDC hop still unproven.
 
 ---
 
@@ -204,7 +223,7 @@ Must decide before implement:
 
 - Server-owned vs user-owned Privy wallet (offline spend requires a server signer).
 - Owner wallet vs platform wallet economic model.
-- Numeric caps, funding rules, withdrawal, admin spend pause.
+- Numeric caps, funding rules, withdrawal, and a **runtime spend pause** (simulation + all spending, no redeploy — QA item 5). Env-only flags are insufficient because Vercel env changes redeploy.
 - Confirm Onramp actually credits USDC (not PathUSD) to a Privy EVM address on Tempo.
 - Whether hosted OpenRouter stays API-key forever or later switches to MPP.
 - Re-validate OpenRouter model ids at implement time.
