@@ -1,13 +1,14 @@
 # Spike: OpenRouter, Privy, Stripe Onramp + MPP
 
-**Status:** research only. Do not implement or enable paid/model paths from this document.
-**Purpose:** what is required to ship GitHub issues [#3](https://github.com/narulaskaran/agent-world/issues/3), [#4](https://github.com/narulaskaran/agent-world/issues/4), and [#5](https://github.com/narulaskaran/agent-world/issues/5). Vendor docs re-checked 2026-09-07; this is not a ROADMAP snapshot.
+**Status:** research/scoping only. Do not implement or enable paid/model paths from this document.
+**Purpose:** define what is required to ship GitHub issues [#3](https://github.com/narulaskaran/agent-world/issues/3), [#4](https://github.com/narulaskaran/agent-world/issues/4), and [#5](https://github.com/narulaskaran/agent-world/issues/5). Vendor docs re-checked 2026-09-07; this is not a ROADMAP snapshot or a product/legal approval.
+**Acceptance meaning:** this spike is scope-complete when it selects a recommended architecture, makes unresolved human decisions explicit, and blocks later gates on them. It must not fabricate a liability/support policy merely to appear launch-ready. Production funding and delegated spend remain intentionally unapproved until product/legal owners resolve the named loss scenarios.
 
 Production today is deterministic hosted mode (`packages/hosted`). Local `PaidServices` still exist behind `AGENT_WORLD_LIVE_MPP`, but hosted jobs never call them.
 
 ## Executive recommendation
 
-Ship this as four separately approved capabilities, not one "payments" feature:
+Ship this as four capabilities delivered through the six separately approved gates below, not one "payments" feature:
 
 1. **Metered model calls:** OpenRouter API-key billing with a hosted virtual reservation ledger. No wallet dependency.
 2. **Wallet custody:** a user-owned Privy embedded wallet, with an app authorization-key quorum added only as a narrowly constrained signer after explicit user consent. Provisioning alone must not authorize spend.
@@ -17,6 +18,17 @@ Ship this as four separately approved capabilities, not one "payments" feature:
 **Recommended economic model:** owner wallet + app-level virtual limits. Do not implement a platform wallet or pooled internal balances in this sequence. If product later chooses platform custody, rescope #4/#5 because ownership, accounting, withdrawals, and regulatory risk change materially.
 
 **Non-negotiable boundary:** funding, delegation, reservation, credential submission, settlement, and reconciliation are different states. A funded wallet is not authorization to spend; a reserved virtual budget is not an onchain debit; an HTTP success without a verified receipt is not settlement. Virtual limits are safety quotas, never user balances, stored value, or a promise that funds can be withdrawn.
+
+### First-release product contract
+
+| Question                                                                                                                                  | First-release answer / approval gate                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who owns funds?                                                                                                                           | The user owns funds in a user-owned embedded wallet. Agent World does not pool funds or maintain redeemable balances.                                                                                                                                                                                      |
+| What is the virtual budget?                                                                                                               | A revocable safety quota that limits app actions; it is not money, credit, or a withdrawal entitlement.                                                                                                                                                                                                    |
+| Who may spend?                                                                                                                            | Only the policy-constrained app signer, after versioned owner consent, for fixed allowlisted operations. World admins do not inherit signing authority.                                                                                                                                                    |
+| What happens on unauthorized spend, signer compromise, mistaken delegation, merchant failure, onramp failure, or irreversible settlement? | **Unresolved release blocker.** Product/legal must assign responsibility and support/compensation policy per scenario. Until approved, no funding or delegated-spend production gate may open; the runtime response is pause, preserve evidence, and reconcile—never promise or issue an automatic refund. |
+| How can a user exit?                                                                                                                      | Before production funding, the user must be able to revoke the app signer and recover/export the wallet or transfer all assets to another user-controlled address. Account deletion must not orphan funds.                                                                                                 |
+| What is user-visible?                                                                                                                     | Wallet/onchain balance, funding state, delegation/caps, quota reserved/spent, payment pending/unknown/settled, fees, and support status are distinct labels.                                                                                                                                               |
 
 ---
 
@@ -136,7 +148,7 @@ Wallets are not in the schema. Identity stays Neon Auth (`fetchSessionUserId` �
 - Ownership: only the Neon session user can read their wallet details. Admin may inspect operational state but must not gain implicit signing or withdrawal authority. No generic signing endpoint exists on the public API.
 - Privy policy must cap what the app signer can do; app-level caps in #5 are a second layer, not a substitute. Quorum threshold/cardinality, managed-key custody, rotation, emergency disablement, compromise response, and current Privy support are implementation gates—not assumptions.
 - Never persist private keys, authorization JWTs, or session signers. Do not put addresses or wallet ids into model context.
-- User deletion must revoke/remove the app signer before deleting the mapping row. Wallet recovery/export/withdrawal remain blocked product decisions; do not silently orphan funded wallets.
+- User deletion must revoke/remove the app signer before deleting the mapping row. Before production funding, select and prove at least one supported user exit path: recover/export the wallet, or transfer all assets to another user-controlled address. If Privy/product policy supports neither, production funding is blocked. Never silently orphan a funded wallet.
 
 ### What stays deterministic
 
@@ -194,7 +206,8 @@ Paid endpoint allowlist (local live path today): OpenRouter MPP host, Exa search
 ### Server-side policy
 
 - Onramp session only for the authenticated owner’s Privy address; never a client-supplied address.
-- Caps: per-action (`maxMicros` already in local `budgeted()`), per-character `daily_budget_micros`, global `server_daily_budget_micros`. Add a per-user cap if many characters share one wallet.
+- Every funding session requires explicit user confirmation of destination wallet, asset/network, requested amount or limits, quoted fees/rate, KYC/geographic eligibility, expected settlement timing, and cancellation/refund limitations. Browser success is not funding proof; signed webhook state and an independent onchain read must reconcile first.
+- Caps are mandatory at four layers from the first paid-spend milestone: per-action (`maxMicros` already in local `budgeted()`), per-character `daily_budget_micros`, per-user aggregate across all paid-spend reservations for that user’s single wallet, and global `server_daily_budget_micros`. Funding and wallet-management operations do not consume spend quota. Held reservations and settled spend count against the UTC budget day; definite pre-submission release or reconciled non-payment restores quota exactly once. A later refund is a separate ledger event and does not silently rewrite historical spend.
 - **Atomic reserve → challenge → authorize → submit → settle/reconcile** (SQLite only covers a simpler virtual reserve/settle/release flow; hosted needs a durable payment-attempt state machine). Before credential submission, a definite failure may release the reservation. After credential submission, transport timeout, missing receipt, or malformed response is **unknown**, not free: keep the reservation held, block automatic retry, and reconcile provider/chain state. Duplicate jobs must reuse the stable operation id and must not create a second authorization.
 - Model never chooses endpoints, amounts, or wallets. Allowlist is server constant. Conversation/memory/tool text cannot change policy.
 - Distinguish three numbers in UI: virtual budget remaining, last onramp receipt, onchain USDC (read-only).
@@ -208,6 +221,8 @@ Persist one row per stable operation id. State transitions are monotonic and con
 
 Terminal/holding alternatives: `rejected`, `expired`, `cancelled`, `unknown`, `reconciled_failed`. Only a definite pre-submission failure or reconciled non-payment releases reserved budget. `submitted` and `unknown` are retry barriers. Store parsed receipt/transaction identifiers and hashes needed for reconciliation, never raw `Authorization`, `WWW-Authenticate`, `Payment-Receipt`, or vendor response bodies.
 
+`reserved`, `challenged`, and `authorized` remain cancelable by the owning user or payment operator before submission. After submission, the user sees **payment pending** or **outcome unknown**, the quota remains held, and neither the user nor an ordinary job can retry or mark it failed. A dedicated server reconciliation role has no signer, funding, policy-change, or arbitrary-write authority: it may query only allowlisted read-only provider/merchant/chain evidence, append immutable evidence hashes/references, and request a conditional `submitted|unknown → settled|reconciled_failed` transition whose amount/asset/network/merchant/transaction match the reserved operation. Every transition is audited; a manual override requires two separately authenticated payment operators and preserves the original state/evidence. Unresolved attempts page the payment operator. `cancelled` means no credential was submitted, while `reconciled_failed` requires affirmative evidence that no payment settled.
+
 The Postgres schema needs uniqueness for the stable operation id and provider/webhook/receipt transaction references, plus conditional updates that make settlement and release exactly-once. Financial methods must fail closed unless the active Neon driver provides a real transaction/locking primitive; `NeonStore.transaction()` currently falls back to running `fn()` without a transaction when `begin` is absent, which is not acceptable for reservation or settlement. Prove the deployed driver behavior with concurrent integration tests before live mode.
 
 The runtime spend pause is checked (with a version/generation) before reservation, immediately before signer use, and immediately before the paid retry. Pausing cannot retract a credential already submitted; those attempts move through reconciliation. The operator control must separately cover model calls, wallet provisioning, onramp session creation, and MPP signing so one subsystem can be halted without pretending an in-flight payment was cancelled.
@@ -215,6 +230,8 @@ The runtime spend pause is checked (with a version/generation) before reservatio
 ### What stays deterministic
 
 `AGENT_WORLD_LIVE_MPP=false` ⇒ fake costs + fallbacks (local behavior). Hosted stays heuristic until both MPP flag and wallet exist. CI never signs 402s or creates onramp sessions.
+
+The existing local live MPP proof used a developer-owned CLI/keychain account. It proves only that the local request flow reached and paid a compatible endpoint; it is not evidence for hosted Privy custody, Stripe funding, durable idempotency, receipt validation, or retry safety.
 
 ### Dependencies
 
@@ -237,11 +254,11 @@ Checklist: **1** no Onramp/MPP in CI/Preview today. **2** live flags + allowlist
 
 Each stage is a separate change set and approval. Later stages do not start merely because an earlier schema or SDK compiles.
 
-1. **#3 OpenRouter (API key)** — hosted `reserveCost`, `LIVE_MODELS` gate, server fetch, deterministic fallback. **Exit:** deterministic CI proves zero vendor calls; concurrency tests prove atomic per-character/user/global caps; live-mode missing-key/invalid-model/pause tests hard-fail; one explicitly approved smallest live probe records usage without content or secrets. Separate PR/review.
-2. **#4a Privy provisioning** — one user-owned wallet per Neon user; no app signer and no spend. **Exit:** concurrent provisioning is idempotent; cross-user/admin signing is impossible; only provider ids/public metadata persist; deletion/recovery behavior is documented and tested. Separate PR/review.
+1. **#3 OpenRouter (API key)** — first build the deterministic hosted ledger, then add `LIVE_MODELS`, server fetch, and deterministic fallback. Start with explicit owner-triggered directives/conversations rather than every autonomous tick. **Exit:** deterministic CI proves zero vendor calls; concurrency tests prove atomic per-character/user/global caps; worst-case daily spend is modeled from cadence × characters × retries; provider-key and request token/timeout limits bound real billing; missing/ambiguous usage is quarantined; one explicitly approved smallest live probe records usage without content or secrets. Separate PR/review.
+2. **#4a Privy provisioning and exit recovery** — one user-owned wallet per Neon user; no app signer and no spend. **Exit:** concurrent provisioning is idempotent; cross-user/admin signing is impossible; only provider ids/public metadata persist; the user can revoke future delegation and recover/export or empty the wallet; funded account deletion cannot orphan assets. Separate PR/review.
 3. **#4b Delegation consent** — attach the constrained app signer only after explicit owner consent. **Exit:** policy and app limits agree on asset/network/action/cap/expiry; revoke and runtime pause are demonstrated; an administrator cannot silently widen or use the grant.
-4. **Sandbox funding proof (human)** — Onramp the smallest supported amount of USDC on Tempo into a disposable wallet. **Exit:** signed Stripe webhook and independent onchain read agree on wallet, asset, amount, status, and transaction; replayed/out-of-order webhooks are idempotent; no production user funds are involved.
-5. **Sandbox MPP proof (human)** — one smallest charge to one hard-coded allowlisted merchant. **Exit:** request digest, stable operation id, challenge, authorization submission, validated receipt, onchain result, and ledger settlement reconcile exactly; a lost-response simulation enters `unknown` and does not repay.
+4. **Sandbox funding proof (human)** — using an isolated non-production Stripe/Privy identity and disposable test wallet only, Onramp the smallest supported amount of USDC on Tempo. This does not approve production funding or resolve the production liability gate. **Exit:** signed Stripe webhook and independent onchain read agree on wallet, asset, amount, status, and transaction; replayed/out-of-order webhooks are idempotent; no production user funds are involved.
+5. **Sandbox MPP proof (human)** — from the same isolated non-production identity/test wallet, make one smallest charge to one hard-coded allowlisted merchant. This does not approve production delegated spend. **Exit:** request digest, stable operation id, challenge, authorization submission, validated receipt, onchain result, and ledger settlement reconcile exactly; a lost-response simulation enters `unknown` and does not repay.
 6. **#5 production path** — hosted MPP via Privy + `mppx`, onramp UI, receipts, reconciliation, and independent runtime pauses. **Exit:** the full synthetic matrix below passes, production caps/alerts are approved, and rollout starts invite-only with one allowlisted operation.
 
 Do not enable any of this to merge a code PR into ordinary Preview.
