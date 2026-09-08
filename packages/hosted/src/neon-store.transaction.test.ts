@@ -15,7 +15,9 @@ describe("NeonStore.transaction", () => {
       );
     });
     const store = new NeonStore(fakeSql({ transaction }));
-    await expect(store.transaction(async () => 7)).resolves.toBe(7);
+    await expect(store.transaction(async () => 7)).rejects.toThrow(
+      "durable financial transaction",
+    );
     expect(transaction).not.toHaveBeenCalled();
   });
 

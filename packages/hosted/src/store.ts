@@ -1,4 +1,14 @@
 import type { WorldArtifact, WorldLocationId } from "../../shared/src/index.js";
+import type {
+  AuditEntry,
+  FundingAttempt,
+  Payment,
+  PaymentGenerations,
+  SpendPause,
+  ToolManifest,
+  Wallet,
+  WalletProvisioningOperation,
+} from "./wallet-payment.js";
 
 export interface CharacterRow {
   id: string;
@@ -229,4 +239,93 @@ export interface HostedStore {
   addAlert(row: AlertRow): Promise<void>;
   listAlerts(limit: number): Promise<AlertRow[]>;
   listCosts(limit: number): Promise<CostRow[]>;
+
+  getWallet(ownerId: string): Promise<Wallet | null>;
+  getWalletProvisioning(
+    ownerId: string,
+    idempotencyKey: string,
+  ): Promise<WalletProvisioningOperation | null>;
+  saveWallet(wallet: Wallet): Promise<void>;
+  claimWalletProvisioning(
+    ownerId: string,
+    idempotencyKey: string,
+    now: number,
+    staleAfterMs: number,
+  ): Promise<{ operation: WalletProvisioningOperation; claimed: boolean }>;
+  completeWalletProvisioning(
+    operation: WalletProvisioningOperation,
+    now: number,
+  ): Promise<void>;
+  failWalletProvisioning(
+    operation: WalletProvisioningOperation,
+    error: string,
+    now: number,
+  ): Promise<void>;
+  listWallets(): Promise<Wallet[]>;
+  getPayment(operationId: string): Promise<Payment | null>;
+  savePayment(payment: Payment): Promise<void>;
+  reserveAndCreatePayment(input: {
+    ownerId: string;
+    day: string;
+    amount: number;
+    limit: number;
+    now: number;
+    payment: Payment;
+  }): Promise<Payment | null>;
+  claimPaymentAuthorization(
+    operationId: string,
+    ownerId: string,
+    now: number,
+    generations: PaymentGenerations,
+  ): Promise<{ payment: Payment; claimed: boolean }>;
+  getFundingAttempt(
+    ownerId: string,
+    idempotencyKey: string,
+  ): Promise<FundingAttempt | null>;
+  claimFundingAttempt(
+    attempt: FundingAttempt,
+    now: number,
+    generations: PaymentGenerations,
+  ): Promise<{ attempt: FundingAttempt; claimed: boolean }>;
+  completeFundingAttempt(attempt: FundingAttempt, now: number): Promise<void>;
+  failFundingAttempt(
+    attempt: FundingAttempt,
+    error: string,
+    now: number,
+  ): Promise<void>;
+  listPayments(ownerId: string, day: string): Promise<Payment[]>;
+  getQuota(ownerId: string): Promise<number | null>;
+  setQuota(
+    ownerId: string,
+    dailyLimitMicros: number,
+    now: number,
+  ): Promise<void>;
+  getPause(scope: string): Promise<SpendPause>;
+  setPause(scope: string, paused: boolean, now: number): Promise<SpendPause>;
+  appendAudit(entry: AuditEntry): Promise<void>;
+  listAudit(ownerId?: string): Promise<AuditEntry[]>;
+  listToolManifests(): Promise<ToolManifest[]>;
+  saveToolManifest(manifest: ToolManifest, now?: number): Promise<void>;
+  activateToolManifest(id: string, version: number, now: number): Promise<void>;
+  readonly supportsFinancialTransactions: boolean;
+  reserveDailySpend?(
+    ownerId: string,
+    day: string,
+    amount: number,
+    limit: number,
+    now: number,
+  ): Promise<boolean>;
+  releaseDailySpend?(
+    ownerId: string,
+    day: string,
+    amount: number,
+    now: number,
+  ): Promise<void>;
+  settleDailySpend?(
+    ownerId: string,
+    day: string,
+    reserved: number,
+    settled: number,
+    now: number,
+  ): Promise<void>;
 }

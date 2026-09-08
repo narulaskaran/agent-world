@@ -24,6 +24,12 @@ import {
   type AutonomyOptions,
 } from "./jobs.js";
 import type { CharacterRow, HostedStore } from "./store.js";
+import {
+  assertIdempotencyKey,
+  PaymentError,
+  type PaymentService,
+  type WalletFundingService,
+} from "./wallet-payment.js";
 
 export type Request = {
   method?: string;
@@ -47,6 +53,7 @@ export interface HostedEnv {
   inviteOnly: boolean;
   inviteUserIds: string[];
   maxCharactersPerUser: number;
+  maxFundingMicros: number;
   mutationLimit: number;
   mutationWindowMs: number;
   drainLimit: number;
@@ -54,6 +61,7 @@ export interface HostedEnv {
   maxAttempts: number;
   eventKeep: number;
   eventMaxAgeMs: number;
+  walletLive?: boolean;
 }
 
 export interface HostedDeps {
@@ -64,6 +72,8 @@ export interface HostedDeps {
   fetch: typeof fetch;
   log?: (event: LogEvent) => void;
   waitUntil?: (task: Promise<unknown>) => void;
+  payments?: PaymentService;
+  funding?: WalletFundingService;
 }
 
 const header = (request: Request, name: string): string | undefined => {
@@ -126,9 +136,15 @@ export const parseEnv = (
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean),
-  maxCharactersPerUser: Number(env.AGENT_WORLD_MAX_CHARACTERS_PER_USER ?? MAX_CHARACTERS_PER_USER) || MAX_CHARACTERS_PER_USER,
+  maxCharactersPerUser:
+    Number(
+      env.AGENT_WORLD_MAX_CHARACTERS_PER_USER ?? MAX_CHARACTERS_PER_USER,
+    ) || MAX_CHARACTERS_PER_USER,
+  maxFundingMicros:
+    Number(env.AGENT_WORLD_MAX_FUNDING_MICROS ?? 1_000_000) || 1_000_000,
   mutationLimit: Number(env.AGENT_WORLD_MUTATION_LIMIT ?? 30) || 30,
-  mutationWindowMs: Number(env.AGENT_WORLD_MUTATION_WINDOW_MS ?? 60_000) || 60_000,
+  mutationWindowMs:
+    Number(env.AGENT_WORLD_MUTATION_WINDOW_MS ?? 60_000) || 60_000,
   drainLimit: Number(env.AGENT_WORLD_DRAIN_LIMIT ?? 20) || 20,
   leaseMs: Number(env.AGENT_WORLD_JOB_LEASE_MS ?? 120_000) || 120_000,
   maxAttempts: Number(env.AGENT_WORLD_JOB_MAX_ATTEMPTS ?? 5) || 5,
@@ -136,13 +152,17 @@ export const parseEnv = (
   eventMaxAgeMs:
     Number(env.AGENT_WORLD_EVENT_MAX_AGE_MS ?? 14 * 24 * 60 * 60 * 1000) ||
     14 * 24 * 60 * 60 * 1000,
+  walletLive: env.AGENT_WORLD_LIVE_WALLETS === "true",
 });
 
 export const isAdmin = (env: HostedEnv, userId: string): boolean =>
   new Set(env.adminUserIds).has(userId);
 
 export const hasCronAccess = (env: HostedEnv, request: Request): boolean =>
-  Boolean(env.cronSecret && header(request, "authorization") === `Bearer ${env.cronSecret}`);
+  Boolean(
+    env.cronSecret &&
+    header(request, "authorization") === `Bearer ${env.cronSecret}`,
+  );
 
 const characterView = (row: CharacterRow, now: number) => {
   const pos = positionAt(row, now);
@@ -156,7 +176,11 @@ const characterView = (row: CharacterRow, now: number) => {
     dailyBudgetMicros: row.dailyBudgetMicros,
     spentTodayMicros: row.spentTodayMicros,
     decisionIntervalSeconds: row.decisionIntervalSeconds,
-    state: (moving ? "moving" : row.state === "moving" ? "active" : row.state) as CharacterState,
+    state: (moving
+      ? "moving"
+      : row.state === "moving"
+        ? "active"
+        : row.state) as CharacterState,
     x: pos.x,
     y: pos.y,
     targetX: row.targetX,
@@ -193,19 +217,25 @@ const worldSnapshot = async (
   connectedViewers: number,
   inviteOnly: boolean,
 ): Promise<WorldSnapshot> => {
-  const [state, characterRows, memoryRows, relationshipRows, eventRows, artifacts] =
-    await Promise.all([
-      store.getWorldState(),
-      store.listCharacters(),
-      store.listMemories(),
-      store.listRelationships(),
-      store.listEvents({
-        limit: 100,
-        viewerCharacterIds,
-        isAdmin: admin,
-      }),
-      store.listArtifacts(),
-    ]);
+  const [
+    state,
+    characterRows,
+    memoryRows,
+    relationshipRows,
+    eventRows,
+    artifacts,
+  ] = await Promise.all([
+    store.getWorldState(),
+    store.listCharacters(),
+    store.listMemories(),
+    store.listRelationships(),
+    store.listEvents({
+      limit: 100,
+      viewerCharacterIds,
+      isAdmin: admin,
+    }),
+    store.listArtifacts(),
+  ]);
   const names = new Map(characterRows.map((row) => [row.id, row.name]));
   const characters = characterRows.map((row) => {
     const memories = memoryRows
@@ -272,8 +302,16 @@ const requireUser = async (
     }
     return userId;
   } catch (error) {
+    const requestId = crypto.randomUUID();
+    (deps.log ?? logEvent)({
+      level: "error",
+      msg: "authentication failed",
+      kind: "AUTHENTICATION_UNAVAILABLE",
+      requestId,
+    });
     send(response, 503, {
-      error: `Authentication unavailable: ${errorMessage(error)}`,
+      error: "AUTHENTICATION_UNAVAILABLE",
+      requestId,
     });
     return null;
   }
@@ -306,7 +344,9 @@ const rateLimitOrReject = async (
     deps.now(),
   );
   if (allowed) return true;
-  send(response, 429, { error: "Too many requests. Please wait and try again." });
+  send(response, 429, {
+    error: "Too many requests. Please wait and try again.",
+  });
   return false;
 };
 
@@ -319,7 +359,9 @@ export async function fetchSessionUserId(
   const response = await fetchImpl(`${baseUrl}/get-session`, {
     headers: {
       accept: "application/json",
-      ...(header(request, "cookie") ? { cookie: header(request, "cookie")! } : {}),
+      ...(header(request, "cookie")
+        ? { cookie: header(request, "cookie")! }
+        : {}),
     },
   });
   if (!response.ok) return null;
@@ -345,7 +387,9 @@ const proxyAuth = async (
 ): Promise<void> => {
   const base = deps.env.neonAuthBaseUrl;
   if (!base)
-    return send(response, 503, { error: "NEON_AUTH_BASE_URL is not configured" });
+    return send(response, 503, {
+      error: "NEON_AUTH_BASE_URL is not configured",
+    });
   const method = (request.method ?? "GET").toUpperCase();
   const incomingUrl = new URL(request.url ?? "/", "http://vercel.internal");
   const headers = new Headers();
@@ -396,7 +440,8 @@ const createCharacterRow = (
   now: number,
 ): CharacterRow => {
   const waypoints = LOCATION_WAYPOINTS.plaza;
-  const spawn = waypoints[hashString(`${ownerId}:${input.name}`) % waypoints.length]!;
+  const spawn =
+    waypoints[hashString(`${ownerId}:${input.name}`) % waypoints.length]!;
   return {
     id: crypto.randomUUID(),
     ownerId,
@@ -506,7 +551,7 @@ export function createHandler(deps: HostedDeps) {
             log({
               level: "error",
               msg: "opportunistic drain failed",
-              kind: errorMessage(error),
+              kind: "AUTONOMY_DRAIN_FAILED",
               requestId,
             });
           });
@@ -546,10 +591,185 @@ export function createHandler(deps: HostedDeps) {
       if (path.startsWith("/auth/"))
         return proxyAuth(deps, path.slice("/auth".length), request, response);
 
+      if (deps.payments && path.startsWith("/wallet")) {
+        const ownerId = await requireUser(deps, request, response);
+        if (!ownerId) return;
+        const payments = deps.payments;
+        try {
+          if (path === "/wallet" && method === "GET") {
+            const wallet = await payments.wallet(ownerId);
+            return send(response, 200, {
+              wallet,
+              quotaMicros: await payments.getQuota(ownerId),
+              payments: await payments.listPayments(ownerId, today(deps.now())),
+            });
+          }
+          if (path === "/wallet/provision" && method === "POST")
+            return send(response, 201, {
+              wallet: await payments.provision(ownerId),
+            });
+          if (path === "/wallet/onramp" && method === "POST") {
+            if (!deps.funding)
+              return send(response, 503, { error: "Onramp unavailable" });
+            const body = parseBody(request);
+            return send(response, 201, {
+              session: await deps.funding.createSession(
+                ownerId,
+                Number(body.amountMicros),
+                assertIdempotencyKey(
+                  String(
+                    body.idempotencyKey ??
+                      header(request, "idempotency-key") ??
+                      `fund:${ownerId}:${body.amountMicros}`,
+                  ),
+                ),
+              ),
+            });
+          }
+          if (path === "/wallet/onramp/reconcile" && method === "POST") {
+            if (!deps.funding)
+              return send(response, 503, { error: "Onramp unavailable" });
+            const body = parseBody(request);
+            return send(response, 200, {
+              attempt: await deps.funding.reconcileFunding(
+                ownerId,
+                String(
+                  body.idempotencyKey ??
+                    header(request, "idempotency-key") ??
+                    "",
+                ),
+              ),
+            });
+          }
+          if (path === "/wallet/consent" && method === "POST") {
+            const body = parseBody(request);
+            return send(response, 200, {
+              wallet: await payments.consent(
+                ownerId,
+                String(body.version ?? ""),
+                ownerId,
+                deps.now(),
+                body.confirmed === true,
+              ),
+            });
+          }
+          if (path === "/wallet/revoke" && method === "POST")
+            return send(response, 200, {
+              wallet: await payments.revoke(ownerId, ownerId, deps.now()),
+            });
+          if (path === "/wallet/quota" && method === "GET")
+            return send(response, 200, {
+              dailyLimitMicros: await payments.getQuota(ownerId),
+            });
+          if (path === "/wallet/quota" && method === "PATCH") {
+            const body = parseBody(request);
+            await payments.setQuota(
+              ownerId,
+              Number(body.dailyLimitMicros),
+              body.confirmed === true,
+              ownerId,
+            );
+            return send(response, 200, {
+              dailyLimitMicros: await payments.getQuota(ownerId),
+            });
+          }
+          if (path === "/wallet/tools" && method === "GET")
+            return send(response, 200, { tools: payments.listTools() });
+          if (path === "/wallet/audit" && method === "GET")
+            return send(response, 200, {
+              audit: await payments.listAudit(ownerId),
+            });
+          if (path === "/wallet/pause" && method === "POST") {
+            const body = parseBody(request);
+            return send(response, 200, {
+              pause: await payments.pauseUser(ownerId, body.paused !== false),
+            });
+          }
+          if (path === "/wallet/payments" && method === "GET")
+            return send(response, 200, {
+              payments: await payments.listPayments(
+                ownerId,
+                search.get("day") ?? today(deps.now()),
+              ),
+            });
+          if (path === "/wallet/payments/reserve" && method === "POST") {
+            const body = parseBody(request);
+            return send(response, 201, {
+              payment: await payments.reserve({
+                operationId: String(body.operationId ?? ""),
+                ownerId,
+                toolId: String(body.toolId ?? ""),
+                input: body.input,
+                maxTotalMicros:
+                  body.maxTotalMicros === undefined
+                    ? undefined
+                    : Number(body.maxTotalMicros),
+                now: deps.now(),
+              }),
+            });
+          }
+          const paymentMatch = path.match(
+            /^\/wallet\/payments\/([^/]+)\/(challenge|authorize|reconcile-authorization|submit|unknown|release|reconcile)$/,
+          );
+          if (paymentMatch && method === "POST") {
+            const id = decodeURIComponent(paymentMatch[1]!);
+            const action = paymentMatch[2];
+            const body = parseBody(request);
+            if (action === "challenge")
+              return send(response, 200, {
+                payment: await payments.challenge(id, ownerId),
+              });
+            if (action === "authorize")
+              return send(response, 200, {
+                payment: await payments.authorize(id, ownerId),
+              });
+            if (action === "reconcile-authorization")
+              return send(response, 200, {
+                payment: await payments.reconcileAuthorization(id, ownerId),
+              });
+            if (action === "submit")
+              return send(response, 200, {
+                payment: await payments.submit(id, ownerId),
+              });
+            if (action === "unknown")
+              return send(response, 200, {
+                payment: await payments.markUnknown(id, ownerId),
+              });
+            if (action === "release")
+              return send(response, 200, {
+                payment: await payments.release(id, ownerId),
+              });
+            return send(response, 200, {
+              payment: await payments.reconcile(
+                id,
+                ownerId,
+                body.receipt as never,
+              ),
+            });
+          }
+        } catch (error) {
+          const code =
+            error instanceof PaymentError ? error.code : "PAYMENT_ERROR";
+          log({
+            level: "error",
+            msg: "payment request failed",
+            kind: code,
+            requestId,
+            path,
+            method,
+          });
+          return send(response, error instanceof PaymentError ? 400 : 500, {
+            error: code,
+            requestId,
+          });
+        }
+      }
+
       if (path === "/characters" && method === "POST") {
         const ownerId = await requireUser(deps, request, response);
         if (!ownerId) return;
-        if (!(await rateLimitOrReject(deps, request, response, ownerId))) return;
+        if (!(await rateLimitOrReject(deps, request, response, ownerId)))
+          return;
         if (!mayCreateCharacter(deps.env, ownerId))
           return send(response, 403, {
             error: "Character creation is invite-only right now",
@@ -560,7 +780,8 @@ export function createHandler(deps: HostedDeps) {
             error: parsed.error.issues[0]?.message ?? "Invalid character",
           });
         if (
-          (await deps.store.countOwned(ownerId)) >= deps.env.maxCharactersPerUser
+          (await deps.store.countOwned(ownerId)) >=
+          deps.env.maxCharactersPerUser
         )
           return send(response, 409, {
             error: `Accounts may keep up to ${deps.env.maxCharactersPerUser} characters`,
@@ -594,25 +815,45 @@ export function createHandler(deps: HostedDeps) {
         } catch (error) {
           if (error instanceof ConflictError)
             return send(response, 409, { error: error.message });
-          return send(response, 409, {
-            error: errorMessage(error).includes("unique")
+          const isUniqueViolation =
+            error instanceof Error &&
+            error.message.toLowerCase().includes("unique");
+          log({
+            level: "error",
+            msg: "character creation failed",
+            kind: isUniqueViolation
+              ? "CHARACTER_ALREADY_EXISTS"
+              : "CHARACTER_CREATION_FAILED",
+            requestId,
+            path,
+            method,
+          });
+          return send(response, isUniqueViolation ? 409 : 500, {
+            error: isUniqueViolation
               ? "That name or account already has a character"
-              : errorMessage(error),
+              : "CHARACTER_CREATION_FAILED",
+            ...(isUniqueViolation ? {} : { requestId }),
           });
         }
-        await runAutonomy(deps.store, autonomyOptions(deps, deps.env.drainLimit));
+        await runAutonomy(
+          deps.store,
+          autonomyOptions(deps, deps.env.drainLimit),
+        );
         const created = await deps.store.getCharacter(row.id);
         return send(
           response,
           201,
-          created ? characterView(created, deps.now()) : characterView(row, now),
+          created
+            ? characterView(created, deps.now())
+            : characterView(row, now),
         );
       }
 
       if (path === "/characters/import" && method === "POST") {
         const ownerId = await requireUser(deps, request, response);
         if (!ownerId) return;
-        if (!(await rateLimitOrReject(deps, request, response, ownerId))) return;
+        if (!(await rateLimitOrReject(deps, request, response, ownerId)))
+          return;
         if (!mayCreateCharacter(deps.env, ownerId))
           return send(response, 403, {
             error: "Character creation is invite-only right now",
@@ -623,7 +864,8 @@ export function createHandler(deps: HostedDeps) {
             error: parsed.error.issues[0]?.message ?? "Invalid export",
           });
         if (
-          (await deps.store.countOwned(ownerId)) >= deps.env.maxCharactersPerUser
+          (await deps.store.countOwned(ownerId)) >=
+          deps.env.maxCharactersPerUser
         )
           return send(response, 409, {
             error: `Accounts may keep up to ${deps.env.maxCharactersPerUser} characters`,
@@ -631,7 +873,9 @@ export function createHandler(deps: HostedDeps) {
         const now = deps.now();
         let name = parsed.data.name;
         if (await deps.store.getCharacter(name))
-          name = `${parsed.data.name} ${hashString(ownerId + now).toString(36).slice(0, 4)}`.slice(0, 24);
+          name = `${parsed.data.name} ${hashString(ownerId + now)
+            .toString(36)
+            .slice(0, 4)}`.slice(0, 24);
         const row = createCharacterRow(
           ownerId,
           {
@@ -680,7 +924,8 @@ export function createHandler(deps: HostedDeps) {
         const owned = await deps.store.findOwned(key, ownerId);
 
         if (action === "export" && method === "GET") {
-          if (!owned) return send(response, 404, { error: "Character not found" });
+          if (!owned)
+            return send(response, 404, { error: "Character not found" });
           const memories = (await deps.store.listMemories()).filter(
             (memory) => memory.characterId === owned.id,
           );
@@ -726,8 +971,10 @@ export function createHandler(deps: HostedDeps) {
           return send(response, 201, { ok: true });
         }
 
-        if (!owned) return send(response, 404, { error: "Character not found" });
-        if (!(await rateLimitOrReject(deps, request, response, ownerId))) return;
+        if (!owned)
+          return send(response, 404, { error: "Character not found" });
+        if (!(await rateLimitOrReject(deps, request, response, ownerId)))
+          return;
 
         if (action === "directives" && method === "POST") {
           const parsed = DirectiveSchema.safeParse(parseBody(request));
@@ -738,7 +985,10 @@ export function createHandler(deps: HostedDeps) {
           const now = deps.now();
           if (parsed.data.mode === "personality") {
             const personality =
-              `${owned.personality}\nOwner update: ${parsed.data.text}`.slice(0, 800);
+              `${owned.personality}\nOwner update: ${parsed.data.text}`.slice(
+                0,
+                800,
+              );
             await deps.store.updateCharacter(owned.id, {
               personality,
               updatedAt: now,
@@ -755,7 +1005,10 @@ export function createHandler(deps: HostedDeps) {
               expiresAt: now + 1_800_000,
               createdAt: now,
             });
-            await runAutonomy(deps.store, autonomyOptions(deps, deps.env.drainLimit));
+            await runAutonomy(
+              deps.store,
+              autonomyOptions(deps, deps.env.drainLimit),
+            );
           }
           await addPublicEvent(deps.store, {
             kind: "owner",
@@ -816,7 +1069,11 @@ export function createHandler(deps: HostedDeps) {
             });
           const input = parsed.data;
           const state =
-            input.paused === undefined ? undefined : input.paused ? "paused" : "active";
+            input.paused === undefined
+              ? undefined
+              : input.paused
+                ? "paused"
+                : "active";
           const intent =
             input.paused === undefined
               ? undefined
@@ -826,7 +1083,8 @@ export function createHandler(deps: HostedDeps) {
           await deps.store.updateCharacter(owned.id, {
             personality: input.personality ?? owned.personality,
             model: input.model ?? owned.model,
-            dailyBudgetMicros: input.dailyBudgetMicros ?? owned.dailyBudgetMicros,
+            dailyBudgetMicros:
+              input.dailyBudgetMicros ?? owned.dailyBudgetMicros,
             decisionIntervalSeconds:
               input.decisionIntervalSeconds ?? owned.decisionIntervalSeconds,
             paused: input.paused ?? owned.paused,
@@ -915,13 +1173,82 @@ export function createHandler(deps: HostedDeps) {
         });
         return send(response, 200, { ok: true });
       }
+      if (path === "/admin/spend-pause" && method === "POST") {
+        const adminId = await requireAdmin(deps, request, response);
+        if (!adminId) return;
+        if (!deps.payments)
+          return send(response, 503, { error: "Payment controls unavailable" });
+        const body = parseBody(request);
+        const scope = String(body.scope ?? "global");
+        const paused = body.paused !== false;
+        const pause =
+          scope === "global"
+            ? await deps.payments.pauseGlobal(paused, adminId)
+            : scope.startsWith("tool:")
+              ? await deps.payments.pauseTool(
+                  scope.slice("tool:".length),
+                  paused,
+                  adminId,
+                )
+              : scope.startsWith("user:")
+                ? await deps.payments.pauseUser(
+                    scope.slice("user:".length),
+                    paused,
+                    adminId,
+                  )
+                : null;
+        if (!pause)
+          return send(response, 400, { error: "Invalid spend pause scope" });
+        return send(response, 200, { pause });
+      }
+      if (path === "/admin/wallet/tool/activate" && method === "POST") {
+        const adminId = await requireAdmin(deps, request, response);
+        if (!adminId) return;
+        if (!deps.payments)
+          return send(response, 503, { error: "Payment controls unavailable" });
+        const body = parseBody(request);
+        await deps.payments.activateTool(
+          String(body.id ?? ""),
+          Number(body.version),
+          adminId,
+        );
+        return send(response, 200, { ok: true });
+      }
+      if (path === "/admin/wallet/payment/reconcile" && method === "POST") {
+        const adminId = await requireAdmin(deps, request, response);
+        if (!adminId) return;
+        if (!deps.payments)
+          return send(response, 503, { error: "Payment controls unavailable" });
+        const body = parseBody(request);
+        return send(response, 200, {
+          payment: await deps.payments.reconcileAuthorization(
+            String(body.operationId ?? ""),
+            String(body.ownerId ?? ""),
+          ),
+        });
+      }
+      if (path === "/admin/wallet/onramp/reconcile" && method === "POST") {
+        const adminId = await requireAdmin(deps, request, response);
+        if (!adminId) return;
+        if (!deps.funding)
+          return send(response, 503, { error: "Onramp unavailable" });
+        const body = parseBody(request);
+        return send(response, 200, {
+          attempt: await deps.funding.reconcileFunding(
+            String(body.ownerId ?? ""),
+            String(body.idempotencyKey ?? ""),
+          ),
+        });
+      }
       if (path === "/admin/pause" && method === "POST") {
         if (!(await requireAdmin(deps, request, response))) return;
         const paused = Boolean(parseBody(request).paused);
         await deps.store.setSimulationPaused(paused, deps.now());
         await addPublicEvent(deps.store, {
           kind: "system",
-          summary: paused ? "The world is paused." : "The world is moving again.",
+          summary: paused
+            ? "The world is paused."
+            : "The world is moving again.",
           createdAt: deps.now(),
         });
         return send(response, 200, { ok: true });
@@ -958,7 +1285,9 @@ export function createHandler(deps: HostedDeps) {
       const hideMatch = path.match(/^\/admin\/events\/([^/]+)\/hide$/);
       if (hideMatch && method === "POST") {
         if (!(await requireAdmin(deps, request, response))) return;
-        const hidden = await deps.store.hideEvent(decodeURIComponent(hideMatch[1]!));
+        const hidden = await deps.store.hideEvent(
+          decodeURIComponent(hideMatch[1]!),
+        );
         if (!hidden) return send(response, 404, { error: "Event not found" });
         return send(response, 200, { ok: true });
       }
@@ -975,13 +1304,22 @@ export function createHandler(deps: HostedDeps) {
       }
 
       if (path === "/jobs/run" && (method === "POST" || method === "GET")) {
-        if (!hasCronAccess(deps.env, request) && !(await requireAdmin(deps, request, response)))
+        if (
+          !hasCronAccess(deps.env, request) &&
+          !(await requireAdmin(deps, request, response))
+        )
           return;
         const limit = Math.max(
           1,
-          Math.min(50, Number(search.get("limit") ?? deps.env.drainLimit) || 20),
+          Math.min(
+            50,
+            Number(search.get("limit") ?? deps.env.drainLimit) || 20,
+          ),
         );
-        const result = await runAutonomy(deps.store, autonomyOptions(deps, limit));
+        const result = await runAutonomy(
+          deps.store,
+          autonomyOptions(deps, limit),
+        );
         if (result.recovered > 0) {
           const alert = {
             level: "alert" as const,
@@ -1018,7 +1356,7 @@ export function createHandler(deps: HostedDeps) {
         path,
         method,
         requestId,
-        kind: errorMessage(error),
+        kind: error instanceof PaymentError ? error.code : "INTERNAL_ERROR",
         durationMs: deps.now() - started,
       });
       await postOperatorAlert(
@@ -1031,7 +1369,10 @@ export function createHandler(deps: HostedDeps) {
         },
         deps.fetch,
       ).catch(() => undefined);
-      send(response, 500, { error: errorMessage(error) });
+      send(response, 500, {
+        error: "INTERNAL_ERROR",
+        requestId,
+      });
     }
   };
 }

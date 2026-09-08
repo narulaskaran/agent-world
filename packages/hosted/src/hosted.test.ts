@@ -9,8 +9,18 @@ import {
 import { createHandler, isAdmin, parseEnv } from "./handler.js";
 import { executeJob, positionAt, runAutonomy } from "./jobs.js";
 import { MemoryStore } from "./memory-store.js";
+import {
+  MockPaymentSigner,
+  MockReceiptVerifier,
+  PaymentService,
+  ToolRegistry,
+} from "./wallet-payment.js";
 import { CLAIM_JOB_SQL } from "./store.js";
-import type { HostedDeps, Request as HandlerRequest, Response } from "./handler.js";
+import type {
+  HostedDeps,
+  Request as HandlerRequest,
+  Response,
+} from "./handler.js";
 import type { CharacterRow } from "./store.js";
 
 class MockResponse implements Response {
@@ -60,7 +70,8 @@ const makeHandler = (
       return null;
     },
     now: () => Date.now(),
-    fetch: (async () => new globalThis.Response("{}", { status: 200 })) as typeof fetch,
+    fetch: (async () =>
+      new globalThis.Response("{}", { status: 200 })) as typeof fetch,
     log: () => undefined,
     ...extras,
   });
@@ -138,6 +149,51 @@ const seedCharacter = async (
   return row;
 };
 
+describe("hosted wallet authorization", () => {
+  it("derives wallet ownership from the authenticated session and gates consent", async () => {
+    const store = new MemoryStore();
+    const payments = new PaymentService(
+      store,
+      new ToolRegistry(),
+      undefined,
+      new MockPaymentSigner(),
+      new MockReceiptVerifier(),
+    );
+    const sessions = new Map<string, string | null>([
+      ["a=1", "owner-a"],
+      ["b=1", "owner-b"],
+      ["admin=1", "admin-1"],
+    ]);
+    const handler = makeHandler(store, sessions, { payments });
+    const provision = await invoke(handler, "/wallet/provision", {
+      method: "POST",
+      cookie: "a=1",
+    });
+    expect(provision.statusCode).toBe(201);
+    const hidden = await invoke(handler, "/wallet", { cookie: "b=1" });
+    expect(hidden.statusCode).toBe(200);
+    expect(hidden.json().wallet).toBeNull();
+    const missingConfirmation = await invoke(handler, "/wallet/consent", {
+      method: "POST",
+      cookie: "a=1",
+      body: { version: "wallet-spend-v1" },
+    });
+    expect(missingConfirmation.statusCode).toBe(400);
+    const consent = await invoke(handler, "/wallet/consent", {
+      method: "POST",
+      cookie: "a=1",
+      body: { version: "wallet-spend-v1", confirmed: true },
+    });
+    expect(consent.statusCode).toBe(200);
+    const pause = await invoke(handler, "/admin/spend-pause", {
+      method: "POST",
+      cookie: "admin=1",
+      body: { scope: "global", paused: true },
+    });
+    expect(pause.statusCode).toBe(200);
+  });
+});
+
 describe("hosted authorization", () => {
   it("rejects anonymous character mutations", async () => {
     const store = new MemoryStore();
@@ -147,6 +203,65 @@ describe("hosted authorization", () => {
       body: characterInput,
     });
     expect(created.statusCode).toBe(401);
+  });
+
+  it("does not disclose authentication exceptions and logs only classification", async () => {
+    const events: import("./logging.js").LogEvent[] = [];
+    const store = new MemoryStore();
+    const handler = makeHandler(store, new Map(), {
+      sessionUserId: async () => {
+        throw new Error("provider password=super-secret SQL stack trace");
+      },
+      log: (event) => events.push(event),
+    });
+    const response = await invoke(handler, "/characters", {
+      method: "POST",
+      body: characterInput,
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.body).not.toContain("super-secret");
+    expect(response.json()).toEqual({
+      error: "AUTHENTICATION_UNAVAILABLE",
+      requestId: expect.any(String),
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        msg: "authentication failed",
+        kind: "AUTHENTICATION_UNAVAILABLE",
+      }),
+    );
+    expect(JSON.stringify(events)).not.toContain("super-secret");
+  });
+
+  it("does not disclose character creation exceptions and logs only classification", async () => {
+    const events: import("./logging.js").LogEvent[] = [];
+    class FailingStore extends MemoryStore {
+      override async transaction<T>(_fn: () => Promise<T>): Promise<T> {
+        throw new Error("duplicate secret=super-secret SQL details");
+      }
+    }
+    const store = new FailingStore();
+    const handler = makeHandler(store, new Map([["user=1", "user-a"]]), {
+      log: (event) => events.push(event),
+    });
+    const response = await invoke(handler, "/characters", {
+      method: "POST",
+      cookie: "user=1",
+      body: characterInput,
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.body).not.toContain("super-secret");
+    expect(response.json()).toEqual({
+      error: "CHARACTER_CREATION_FAILED",
+      requestId: expect.any(String),
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        msg: "character creation failed",
+        kind: "CHARACTER_CREATION_FAILED",
+      }),
+    );
+    expect(JSON.stringify(events)).not.toContain("super-secret");
   });
 
   it("rejects cross-user ownership mutations", async () => {
@@ -256,7 +371,9 @@ describe("hosted queue and transaction semantics", () => {
       store.transaction(() => make("user-b")),
     ]);
     expect(results.filter((result) => result === "ok")).toHaveLength(1);
-    expect(await store.countOwned("user-a") + await store.countOwned("user-b")).toBe(1);
+    expect(
+      (await store.countOwned("user-a")) + (await store.countOwned("user-b")),
+    ).toBe(1);
   });
 
   it("does not process the same job twice after completion", async () => {
@@ -324,14 +441,20 @@ describe("hosted product surfaces", () => {
       viewerCharacterIds: [],
       isAdmin: false,
     });
-    expect(publicEvents.some((event) => event.summary.includes("started talking"))).toBe(true);
-    expect(publicEvents.some((event) => event.visibility === "private")).toBe(false);
+    expect(
+      publicEvents.some((event) => event.summary.includes("started talking")),
+    ).toBe(true);
+    expect(publicEvents.some((event) => event.visibility === "private")).toBe(
+      false,
+    );
     const ownerEvents = await store.listEvents({
       limit: 20,
       viewerCharacterIds: [moss.id],
       isAdmin: false,
     });
-    expect(ownerEvents.some((event) => event.visibility === "private")).toBe(true);
+    expect(ownerEvents.some((event) => event.visibility === "private")).toBe(
+      true,
+    );
     expect(juniper.id).toBeTruthy();
   });
 
@@ -410,9 +533,13 @@ describe("hosted product surfaces", () => {
       body: characterInput,
     });
     expect(created.statusCode).toBe(201);
-    const exported = await invoke(handler, `/characters/${created.json().id}/export`, {
-      cookie: "a=1",
-    });
+    const exported = await invoke(
+      handler,
+      `/characters/${created.json().id}/export`,
+      {
+        cookie: "a=1",
+      },
+    );
     expect(exported.statusCode).toBe(200);
     expect(exported.json().version).toBe(1);
     const imported = await invoke(handler, "/characters/import", {
@@ -504,8 +631,7 @@ describe("hosted product surfaces", () => {
     const arrived = positionAt(moved!, moved!.movementArrivesAt);
     expect(arrived.x).toBe(moved!.targetX);
     expect(arrived.y).toBe(moved!.targetY);
-    if (moved!.x !== moved!.targetX)
-      expect(mid.x).not.toBe(moved!.targetX);
+    if (moved!.x !== moved!.targetX) expect(mid.x).not.toBe(moved!.targetX);
   });
 
   it("keeps owner directive text out of the public log", async () => {
@@ -514,11 +640,15 @@ describe("hosted product surfaces", () => {
     const sessions = new Map<string, string | null>([["a=1", "user-a"]]);
     const handler = makeHandler(store, sessions);
     const secret = "Secret park rendezvous at dusk";
-    const directed = await invoke(handler, `/characters/${moss.id}/directives`, {
-      method: "POST",
-      cookie: "a=1",
-      body: { mode: "directive", text: secret },
-    });
+    const directed = await invoke(
+      handler,
+      `/characters/${moss.id}/directives`,
+      {
+        method: "POST",
+        cookie: "a=1",
+        body: { mode: "directive", text: secret },
+      },
+    );
     expect(directed.statusCode).toBe(200);
     const publicEvents = await store.listEvents({
       limit: 20,
