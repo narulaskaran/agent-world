@@ -586,6 +586,58 @@ describe("hosted product surfaces", () => {
     expect(created.statusCode).toBe(403);
   });
 
+  it("keeps health and spectator state up when ensureSchema throws", async () => {
+    class BrokenSchemaStore extends MemoryStore {
+      override async ensureSchema(): Promise<void> {
+        throw new Error("wallet ddl failed");
+      }
+    }
+    const store = new BrokenSchemaStore();
+    await seedCharacter(store, "user-a", "Moss");
+    const handler = makeHandler(store, new Map());
+    const health = await invoke(handler, "/health");
+    expect(health.statusCode).toBe(200);
+    expect(health.json()).toEqual({
+      ok: true,
+      dependencies: { database: "ok", auth: "configured" },
+    });
+    const state = await invoke(handler, "/state");
+    expect(state.statusCode).toBe(200);
+    expect(state.json().snapshot.characters).toHaveLength(1);
+  });
+
+  it("returns honest 503 health when the world database probe fails", async () => {
+    class DownStore extends MemoryStore {
+      override async getWorldState(): Promise<never> {
+        throw new Error("db down");
+      }
+    }
+    const health = await invoke(
+      makeHandler(new DownStore(), new Map()),
+      "/health",
+    );
+    expect(health.statusCode).toBe(503);
+    expect(health.json()).toEqual({
+      ok: false,
+      dependencies: { database: "error", auth: "configured" },
+    });
+  });
+
+  it("auth-gates wallet routes instead of returning INTERNAL_ERROR when schema ensure fails", async () => {
+    class BrokenSchemaStore extends MemoryStore {
+      override async ensureSchema(): Promise<void> {
+        throw new Error("wallet ddl failed");
+      }
+    }
+    const store = new BrokenSchemaStore();
+    const handler = makeHandler(store, new Map(), {
+      payments: new PaymentService(store, new ToolRegistry()),
+    });
+    const wallet = await invoke(handler, "/wallet");
+    expect(wallet.statusCode).toBe(401);
+    expect(wallet.json().error).not.toBe("INTERNAL_ERROR");
+  });
+
   it("lets spectators poll state to schedule and drain due ticks", async () => {
     const store = new MemoryStore();
     const moss = await seedCharacter(store, "user-a", "Moss", 1_000);

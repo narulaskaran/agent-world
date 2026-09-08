@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { WorldArtifact, WorldLocationId } from "../../shared/src/index.js";
 import { ConflictError } from "./errors.js";
+import { logEvent } from "./logging.js";
 import { PaymentError } from "./wallet-payment.js";
 import type {
   AuditEntry,
@@ -37,49 +38,7 @@ export type NeonSql = ((
   transaction?: <T>(fn: (sql: NeonSql) => Promise<T>) => Promise<T>;
 };
 
-const SCHEMA_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS user_wallets (owner_id text PRIMARY KEY, provider_user_id text NOT NULL UNIQUE, provider_wallet_id text NOT NULL UNIQUE, address text NOT NULL, chain text NOT NULL DEFAULT 'tempo', asset text NOT NULL DEFAULT 'USDC', consent_version text, consent_at bigint, consent_actor text, delegated boolean NOT NULL DEFAULT false, revoked boolean NOT NULL DEFAULT false, created_at bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0)`,
-  `CREATE TABLE IF NOT EXISTS wallet_provisioning_operations (owner_id text NOT NULL, idempotency_key text NOT NULL, status text NOT NULL, provider_idempotency_key text NOT NULL UNIQUE, provider_user_id text, provider_wallet_id text, address text, chain text, asset text, error text, created_at bigint NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (owner_id, idempotency_key))`,
-  `CREATE TABLE IF NOT EXISTS funding_attempts (owner_id text NOT NULL, idempotency_key text NOT NULL, provider_idempotency_key text NOT NULL UNIQUE, amount_micros bigint NOT NULL CHECK (amount_micros > 0 AND amount_micros <= 1000000), wallet_address text NOT NULL, consent_version text NOT NULL, policy_snapshot jsonb, pause_generations jsonb NOT NULL DEFAULT '{"global":0,"user":0,"tool":0}'::jsonb, provider_phase text NOT NULL DEFAULT 'not_started', status text NOT NULL, session jsonb, error text, created_at bigint NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (owner_id, idempotency_key))`,
-  `CREATE TABLE IF NOT EXISTS payment_attempts (operation_id text PRIMARY KEY, owner_id text NOT NULL, tool_id text NOT NULL, manifest_version integer NOT NULL, max_total_micros bigint NOT NULL CHECK (max_total_micros >= 0), reserved_micros bigint NOT NULL CHECK (reserved_micros >= 0), actual_micros bigint CHECK (actual_micros IS NULL OR actual_micros >= 0), state text NOT NULL CHECK (state IN ('reserved','challenged','authorized','submitted','unknown','settled','rejected','expired','cancelled','reconciled_failed')), created_at bigint NOT NULL, updated_at bigint NOT NULL, provider_reference text UNIQUE, receipt_reference text UNIQUE, receipt_hash text, request_digest text NOT NULL, manifest_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb, pause_generation bigint NOT NULL DEFAULT 0, pause_generations jsonb NOT NULL DEFAULT '{"global":0,"user":0,"tool":0}'::jsonb, authorization_provider_idempotency_key text, provider_phase text NOT NULL DEFAULT 'not_started', version bigint NOT NULL DEFAULT 0)`,
-  `CREATE TABLE IF NOT EXISTS spend_pauses (scope text PRIMARY KEY, paused boolean NOT NULL DEFAULT false, generation bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0)`,
-  `CREATE TABLE IF NOT EXISTS payment_quotas (owner_id text PRIMARY KEY, daily_limit_micros bigint NOT NULL, updated_at bigint NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS user_daily_spend (owner_id text NOT NULL, spend_date date NOT NULL, daily_limit_micros bigint NOT NULL, reserved_micros bigint NOT NULL DEFAULT 0, settled_micros bigint NOT NULL DEFAULT 0, version bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0, PRIMARY KEY (owner_id, spend_date))`,
-  `CREATE TABLE IF NOT EXISTS tool_manifests (id text NOT NULL, version integer NOT NULL, active boolean NOT NULL DEFAULT false, reviewed boolean NOT NULL DEFAULT false, manifest jsonb NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (id, version))`,
-  `CREATE TABLE IF NOT EXISTS tool_manifest_current (id text PRIMARY KEY, version integer NOT NULL, activated_at bigint NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS payment_audit (id text PRIMARY KEY, operation_id text, owner_id text NOT NULL, actor text NOT NULL, event text NOT NULL, state text, provider_phase text, amount_micros bigint, receipt_reference text, evidence_hash text, created_at bigint NOT NULL)`,
-  "ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS chain text NOT NULL DEFAULT 'tempo'",
-  "ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS asset text NOT NULL DEFAULT 'USDC'",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS actual_micros bigint",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS provider_reference text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS request_digest text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS manifest_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS pause_generation bigint NOT NULL DEFAULT 0",
-  'ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS pause_generations jsonb NOT NULL DEFAULT \'{"global":0,"user":0,"tool":0}\'::jsonb',
-  'ALTER TABLE funding_attempts ADD COLUMN IF NOT EXISTS pause_generations jsonb NOT NULL DEFAULT \'{"global":0,"user":0,"tool":0}\'::jsonb',
-  "ALTER TABLE funding_attempts ADD COLUMN IF NOT EXISTS provider_phase text NOT NULL DEFAULT 'not_started'",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS authorization_provider_idempotency_key text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS provider_phase text NOT NULL DEFAULT 'not_started'",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS authorization_claim_token text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS authorization_claimed_at bigint",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS consent_version text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS payer_address text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS receipt_evidence jsonb",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS receipt_reference text",
-  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS transaction_reference text",
-  "ALTER TABLE user_daily_spend ADD COLUMN IF NOT EXISTS updated_at bigint NOT NULL DEFAULT 0",
-  "CREATE UNIQUE INDEX IF NOT EXISTS payment_attempt_transaction_reference_idx ON payment_attempts(transaction_reference) WHERE transaction_reference IS NOT NULL",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS actor text NOT NULL DEFAULT 'system'",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS provider_phase text",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS evidence_hash text",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS manifest_snapshot jsonb",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS consent_version text",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS pause_generations jsonb",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS request_digest text",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS transition_version bigint",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS provider_reference text",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS transaction_reference text",
-  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS receipt_evidence jsonb",
+const WORLD_SCHEMA_STATEMENTS = [
   "DROP INDEX IF EXISTS characters_owner_unique",
   "CREATE INDEX IF NOT EXISTS characters_owner_idx ON characters (owner_id)",
   "ALTER TABLE characters ADD COLUMN IF NOT EXISTS reputation integer NOT NULL DEFAULT 0",
@@ -139,9 +98,54 @@ const SCHEMA_STATEMENTS = [
     viewer_key text PRIMARY KEY,
     seen_at bigint NOT NULL
   )`,
-  `CREATE OR REPLACE FUNCTION prevent_payment_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'payment audit is immutable'; END; $$`,
-  `DROP TRIGGER IF EXISTS payment_audit_immutable ON payment_audit`,
-  `CREATE TRIGGER payment_audit_immutable BEFORE UPDATE OR DELETE ON payment_audit FOR EACH ROW EXECUTE FUNCTION prevent_payment_audit_mutation()`,
+];
+
+const WALLET_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS user_wallets (owner_id text PRIMARY KEY, provider_user_id text NOT NULL UNIQUE, provider_wallet_id text NOT NULL UNIQUE, address text NOT NULL, chain text NOT NULL DEFAULT 'tempo', asset text NOT NULL DEFAULT 'USDC', consent_version text, consent_at bigint, consent_actor text, delegated boolean NOT NULL DEFAULT false, revoked boolean NOT NULL DEFAULT false, created_at bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS wallet_provisioning_operations (owner_id text NOT NULL, idempotency_key text NOT NULL, status text NOT NULL, provider_idempotency_key text NOT NULL UNIQUE, provider_user_id text, provider_wallet_id text, address text, chain text, asset text, error text, created_at bigint NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (owner_id, idempotency_key))`,
+  `CREATE TABLE IF NOT EXISTS funding_attempts (owner_id text NOT NULL, idempotency_key text NOT NULL, provider_idempotency_key text NOT NULL UNIQUE, amount_micros bigint NOT NULL CHECK (amount_micros > 0 AND amount_micros <= 1000000), wallet_address text NOT NULL, consent_version text NOT NULL, policy_snapshot jsonb, pause_generations jsonb NOT NULL DEFAULT '{"global":0,"user":0,"tool":0}'::jsonb, provider_phase text NOT NULL DEFAULT 'not_started', status text NOT NULL, session jsonb, error text, created_at bigint NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (owner_id, idempotency_key))`,
+  `CREATE TABLE IF NOT EXISTS payment_attempts (operation_id text PRIMARY KEY, owner_id text NOT NULL, tool_id text NOT NULL, manifest_version integer NOT NULL, max_total_micros bigint NOT NULL CHECK (max_total_micros >= 0), reserved_micros bigint NOT NULL CHECK (reserved_micros >= 0), actual_micros bigint CHECK (actual_micros IS NULL OR actual_micros >= 0), state text NOT NULL CHECK (state IN ('reserved','challenged','authorized','submitted','unknown','settled','rejected','expired','cancelled','reconciled_failed')), created_at bigint NOT NULL, updated_at bigint NOT NULL, provider_reference text UNIQUE, receipt_reference text UNIQUE, receipt_hash text, request_digest text NOT NULL, manifest_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb, pause_generation bigint NOT NULL DEFAULT 0, pause_generations jsonb NOT NULL DEFAULT '{"global":0,"user":0,"tool":0}'::jsonb, authorization_provider_idempotency_key text, provider_phase text NOT NULL DEFAULT 'not_started', version bigint NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS spend_pauses (scope text PRIMARY KEY, paused boolean NOT NULL DEFAULT false, generation bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS payment_quotas (owner_id text PRIMARY KEY, daily_limit_micros bigint NOT NULL, updated_at bigint NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS user_daily_spend (owner_id text NOT NULL, spend_date date NOT NULL, daily_limit_micros bigint NOT NULL, reserved_micros bigint NOT NULL DEFAULT 0, settled_micros bigint NOT NULL DEFAULT 0, version bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0, PRIMARY KEY (owner_id, spend_date))`,
+  `CREATE TABLE IF NOT EXISTS tool_manifests (id text NOT NULL, version integer NOT NULL, active boolean NOT NULL DEFAULT false, reviewed boolean NOT NULL DEFAULT false, manifest jsonb NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (id, version))`,
+  `CREATE TABLE IF NOT EXISTS tool_manifest_current (id text PRIMARY KEY, version integer NOT NULL, activated_at bigint NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS payment_audit (id text PRIMARY KEY, operation_id text, owner_id text NOT NULL, actor text NOT NULL, event text NOT NULL, state text, provider_phase text, amount_micros bigint, receipt_reference text, evidence_hash text, created_at bigint NOT NULL)`,
+  "ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS chain text NOT NULL DEFAULT 'tempo'",
+  "ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS asset text NOT NULL DEFAULT 'USDC'",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS actual_micros bigint",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS provider_reference text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS request_digest text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS manifest_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS pause_generation bigint NOT NULL DEFAULT 0",
+  'ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS pause_generations jsonb NOT NULL DEFAULT \'{"global":0,"user":0,"tool":0}\'::jsonb',
+  'ALTER TABLE funding_attempts ADD COLUMN IF NOT EXISTS pause_generations jsonb NOT NULL DEFAULT \'{"global":0,"user":0,"tool":0}\'::jsonb',
+  "ALTER TABLE funding_attempts ADD COLUMN IF NOT EXISTS provider_phase text NOT NULL DEFAULT 'not_started'",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS authorization_provider_idempotency_key text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS provider_phase text NOT NULL DEFAULT 'not_started'",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS authorization_claim_token text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS authorization_claimed_at bigint",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS consent_version text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS payer_address text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS receipt_evidence jsonb",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS receipt_reference text",
+  "ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS transaction_reference text",
+  "ALTER TABLE user_daily_spend ADD COLUMN IF NOT EXISTS updated_at bigint NOT NULL DEFAULT 0",
+  "CREATE UNIQUE INDEX IF NOT EXISTS payment_attempt_transaction_reference_idx ON payment_attempts(transaction_reference) WHERE transaction_reference IS NOT NULL",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS actor text NOT NULL DEFAULT 'system'",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS provider_phase text",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS evidence_hash text",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS manifest_snapshot jsonb",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS consent_version text",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS pause_generations jsonb",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS request_digest text",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS transition_version bigint",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS provider_reference text",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS transaction_reference text",
+  "ALTER TABLE payment_audit ADD COLUMN IF NOT EXISTS receipt_evidence jsonb",
+  "CREATE OR REPLACE FUNCTION prevent_payment_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''payment audit is immutable''; END;'",
+  "DROP TRIGGER IF EXISTS payment_audit_immutable ON payment_audit",
+  "CREATE TRIGGER payment_audit_immutable BEFORE UPDATE OR DELETE ON payment_audit FOR EACH ROW EXECUTE PROCEDURE prevent_payment_audit_mutation()",
 ];
 
 const parsePayload = (value: unknown): Record<string, unknown> => {
@@ -210,6 +214,7 @@ export class NeonStore implements HostedStore {
   readonly supportsFinancialTransactions: boolean;
   private readonly context = new AsyncLocalStorage<NeonSql>();
   private schemaReady = false;
+  private walletSchemaReady = false;
 
   constructor(private readonly root: NeonSql) {
     this.supportsFinancialTransactions = typeof root.begin === "function";
@@ -220,10 +225,32 @@ export class NeonStore implements HostedStore {
   }
 
   async ensureSchema(): Promise<void> {
-    if (this.schemaReady) return;
-    for (const statement of SCHEMA_STATEMENTS)
-      await this.sql().query(statement);
-    this.schemaReady = true;
+    if (!this.schemaReady) {
+      for (const statement of WORLD_SCHEMA_STATEMENTS)
+        await this.sql().query(statement);
+      this.schemaReady = true;
+    }
+    await this.ensureWalletSchema();
+  }
+
+  private async ensureWalletSchema(): Promise<void> {
+    if (this.walletSchemaReady) return;
+    let failed: string | undefined;
+    for (const statement of WALLET_SCHEMA_STATEMENTS) {
+      try {
+        await this.sql().query(statement);
+      } catch (error) {
+        failed ??=
+          error instanceof Error ? error.message.slice(0, 180) : "unknown";
+      }
+    }
+    this.walletSchemaReady = true;
+    if (failed)
+      logEvent({
+        level: "error",
+        msg: `wallet schema ensure failed: ${failed}`,
+        kind: "WALLET_SCHEMA_UNAVAILABLE",
+      });
   }
 
   async transaction<T>(fn: () => Promise<T>): Promise<T> {

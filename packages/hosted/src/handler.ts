@@ -512,7 +512,6 @@ export function createHandler(deps: HostedDeps) {
     const { path, search } = pathFor(request);
     const method = (request.method ?? "GET").toUpperCase();
     try {
-      await deps.store.ensureSchema();
       if (path === "/health" && method === "GET") {
         let database = "ok";
         try {
@@ -529,6 +528,19 @@ export function createHandler(deps: HostedDeps) {
             dependencies: { database, auth },
           },
         );
+      }
+
+      try {
+        await deps.store.ensureSchema();
+      } catch {
+        log({
+          level: "error",
+          msg: "schema ensure failed",
+          kind: "SCHEMA_UNAVAILABLE",
+          requestId,
+          path,
+          method,
+        });
       }
 
       const viewerId = await deps.sessionUserId(request).catch(() => null);

@@ -33,3 +33,35 @@ describe("NeonStore.transaction", () => {
     expect(began).toBe(1);
   });
 });
+
+describe("NeonStore.ensureSchema", () => {
+  it("applies world schema even when wallet DDL fails", async () => {
+    const statements: string[] = [];
+    const sql = fakeSql();
+    sql.query = async (text: string) => {
+      statements.push(text);
+      if (
+        /user_wallets|payment_attempts|payment_audit|funding_attempts|spend_pauses|tool_manifests|wallet_provisioning|user_daily_spend|payment_quotas/i.test(
+          text,
+        )
+      )
+        throw new Error("permission denied for table user_wallets");
+      return [];
+    };
+    const store = new NeonStore(sql);
+    await expect(store.ensureSchema()).resolves.toBeUndefined();
+    expect(
+      statements.some((statement) => statement.includes("viewer_presence")),
+    ).toBe(true);
+    expect(
+      statements.some((statement) =>
+        statement.includes("characters_owner_idx"),
+      ),
+    ).toBe(true);
+    await expect(store.ensureSchema()).resolves.toBeUndefined();
+    const worldPasses = statements.filter((statement) =>
+      statement.includes("viewer_presence"),
+    );
+    expect(worldPasses).toHaveLength(1);
+  });
+});

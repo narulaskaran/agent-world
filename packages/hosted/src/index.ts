@@ -1,5 +1,10 @@
 import { neon } from "@neondatabase/serverless";
-import { createHandler, fetchSessionUserId, parseEnv } from "./handler.js";
+import {
+  createHandler,
+  fetchSessionUserId,
+  parseEnv,
+  type Request,
+} from "./handler.js";
 import {
   DEFAULT_DAILY_LIMIT_MICROS,
   FailClosedOnrampProvider,
@@ -56,34 +61,37 @@ export function createProductionHandler() {
   ) as unknown as NeonSql;
   const store = new NeonStore(sql);
   const env = parseEnv(process.env);
-  const walletService = new WalletService(
-    store,
-    new GatedWalletProvider(env.walletLive === true),
-    () => env.walletLive === true,
-  );
-  const payments = new PaymentService(
-    store,
-    new ToolRegistry(),
-    DEFAULT_DAILY_LIMIT_MICROS,
-    undefined,
-    undefined,
-    () => Date.now(),
-    walletService,
-  );
-  const funding = new WalletFundingService(
-    store,
-    new FailClosedOnrampProvider(),
-    () => Date.now(),
-    env.maxFundingMicros,
-  );
-  return createHandler({
+  const deps = {
     store,
     env,
-    sessionUserId: (request) =>
+    sessionUserId: (request: Request) =>
       fetchSessionUserId(request, env.neonAuthBaseUrl, fetch),
     now: () => Date.now(),
     fetch,
-    payments,
-    funding,
-  });
+  };
+  try {
+    const walletService = new WalletService(
+      store,
+      new GatedWalletProvider(env.walletLive === true),
+      () => env.walletLive === true,
+    );
+    const payments = new PaymentService(
+      store,
+      new ToolRegistry(),
+      DEFAULT_DAILY_LIMIT_MICROS,
+      undefined,
+      undefined,
+      () => Date.now(),
+      walletService,
+    );
+    const funding = new WalletFundingService(
+      store,
+      new FailClosedOnrampProvider(),
+      () => Date.now(),
+      env.maxFundingMicros,
+    );
+    return createHandler({ ...deps, payments, funding });
+  } catch {
+    return createHandler(deps);
+  }
 }

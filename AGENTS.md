@@ -9,7 +9,8 @@
 - `packages/hosted`: hosted HTTP handler, job runner, MemoryStore tests, NeonStore.
 - `api/index.ts`: Vercel Function entry that re-exports `createProductionHandler()`.
 - `db/migrations`: checked-in Postgres SQL. `0002_hosted.sql` is also applied at
-  runtime by `NeonStore.ensureSchema()`.
+  runtime by `NeonStore.ensureSchema()`. Wallet/payment DDL from
+  `0003_wallet_payment.sql` is best-effort and must not block `/health` or `/state`.
 - `.github/workflows/check.yml`: `pnpm check` plus optional live Neon claims.
 
 ## Hosted behavior

@@ -11,7 +11,8 @@ The Vercel project is connected to this repository and deploys `main` to
 production. Its Neon marketplace resource supplies Postgres and Neon Auth
 environment variables. Migrations `db/migrations/0001_hosted.sql` and
 `db/migrations/0002_hosted.sql` are checked in; `NeonStore.ensureSchema()`
-applies additive 0002 statements at runtime.
+applies additive 0002 statements at runtime. Wallet/payment DDL from
+`0003_wallet_payment.sql` is best-effort and must not block `/health` or `/state`.
 
 Production verification completed successfully for the first hosted milestone
 (auth, owned character, deterministic exploration, owner directive). Follow-up
