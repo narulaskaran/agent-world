@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { WorldArtifact, WorldLocationId } from "../../shared/src/index.js";
-import { ConflictError } from "./errors.js";
+import { ConflictError, isDatabaseUnavailable } from "./errors.js";
 import { logEvent } from "./logging.js";
 import { PaymentError } from "./wallet-payment.js";
 import type {
@@ -337,6 +337,7 @@ export class NeonStore implements HostedStore {
   private readonly context = new AsyncLocalStorage<NeonSql>();
   private schemaReady = false;
   private walletSchemaReady = false;
+  private dbBlockedUntil = 0;
 
   constructor(private readonly root: NeonSql) {
     this.supportsFinancialTransactions = typeof root.begin === "function";
@@ -346,13 +347,30 @@ export class NeonStore implements HostedStore {
     return this.context.getStore() ?? this.root;
   }
 
+  private rememberDbError(error: unknown): void {
+    if (isDatabaseUnavailable(error)) this.dbBlockedUntil = Date.now() + 60_000;
+  }
+
+  private throwIfDbBlocked(): void {
+    if (Date.now() < this.dbBlockedUntil)
+      throw new Error(
+        "Your project has exceeded the data transfer quota. Upgrade your plan to increase limits.",
+      );
+  }
+
   async ensureSchema(): Promise<void> {
-    if (!this.schemaReady) {
-      for (const statement of WORLD_SCHEMA_STATEMENTS)
-        await this.sql().query(statement);
-      this.schemaReady = true;
+    this.throwIfDbBlocked();
+    try {
+      if (!this.schemaReady) {
+        for (const statement of WORLD_SCHEMA_STATEMENTS)
+          await this.sql().query(statement);
+        this.schemaReady = true;
+      }
+      await this.ensureWalletSchema();
+    } catch (error) {
+      this.rememberDbError(error);
+      throw error;
     }
-    await this.ensureWalletSchema();
   }
 
   private async ensureWalletSchema(): Promise<void> {
@@ -362,8 +380,10 @@ export class NeonStore implements HostedStore {
       try {
         await this.sql().query(statement);
       } catch (error) {
+        this.rememberDbError(error);
         failed ??=
           error instanceof Error ? error.message.slice(0, 180) : "unknown";
+        if (isDatabaseUnavailable(error)) break;
       }
     }
     this.walletSchemaReady = true;
@@ -387,16 +407,22 @@ export class NeonStore implements HostedStore {
   }
 
   async getWorldState(): Promise<WorldStateRow> {
-    const rows = await this.sql()`SELECT * FROM world_state WHERE id = 1`;
-    const row = rows[0] ?? {};
-    return {
-      simulationPaused: Boolean(row.simulation_paused),
-      pausedAt: Number(row.paused_at ?? 0),
-      serverDailyBudgetMicros: Number(row.server_daily_budget_micros ?? 0),
-      serverSpentTodayMicros: Number(row.server_spent_today_micros ?? 0),
-      budgetDate: String(row.budget_date ?? ""),
-      updatedAt: Number(row.updated_at ?? 0),
-    };
+    this.throwIfDbBlocked();
+    try {
+      const rows = await this.sql()`SELECT * FROM world_state WHERE id = 1`;
+      const row = rows[0] ?? {};
+      return {
+        simulationPaused: Boolean(row.simulation_paused),
+        pausedAt: Number(row.paused_at ?? 0),
+        serverDailyBudgetMicros: Number(row.server_daily_budget_micros ?? 0),
+        serverSpentTodayMicros: Number(row.server_spent_today_micros ?? 0),
+        budgetDate: String(row.budget_date ?? ""),
+        updatedAt: Number(row.updated_at ?? 0),
+      };
+    } catch (error) {
+      this.rememberDbError(error);
+      throw error;
+    }
   }
 
   async setSimulationPaused(paused: boolean, now: number): Promise<void> {

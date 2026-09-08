@@ -14,3 +14,8 @@ export class ConflictError extends HttpError {
     this.name = "ConflictError";
   }
 }
+
+export const isDatabaseUnavailable = (error: unknown): boolean =>
+  /402|data transfer quota|connection string was provided|ECONNREFUSED|fetch failed/i.test(
+    error instanceof Error ? error.message : String(error),
+  );

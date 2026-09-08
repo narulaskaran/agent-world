@@ -13,6 +13,9 @@ environment variables. Migrations `db/migrations/0001_hosted.sql` and
 `db/migrations/0002_hosted.sql` are checked in; `NeonStore.ensureSchema()`
 applies additive 0002 statements at runtime. Wallet/payment DDL from
 `0003_wallet_payment.sql` is best-effort and must not block `/health` or `/state`.
+Neon HTTP 402 data-transfer quota is treated as `DATABASE_UNAVAILABLE` (503)
+rather than opaque 500, and schema ensure stops retrying so it cannot keep
+burning quota.
 
 Production verification completed successfully for the first hosted milestone
 (auth, owned character, deterministic exploration, owner directive). Follow-up

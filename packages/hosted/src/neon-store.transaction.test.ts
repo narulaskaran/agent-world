@@ -64,4 +64,26 @@ describe("NeonStore.ensureSchema", () => {
     );
     expect(worldPasses).toHaveLength(1);
   });
+
+  it("stops applying wallet DDL after a Neon quota error", async () => {
+    let queries = 0;
+    const sql = fakeSql();
+    sql.query = async (text: string) => {
+      queries += 1;
+      if (
+        /user_wallets|payment_attempts|funding_attempts|spend_pauses|wallet_provisioning|payment_audit|payment_quotas|tool_manifests|user_daily_spend/i.test(
+          text,
+        )
+      )
+        throw new Error(
+          'Server error (HTTP status 402): {"message":"Your project has exceeded the data transfer quota."}',
+        );
+      return [];
+    };
+    const store = new NeonStore(sql);
+    await store.ensureSchema();
+    const afterWorld = queries;
+    await expect(store.ensureSchema()).rejects.toThrow(/data transfer quota/);
+    expect(queries).toBe(afterWorld);
+  });
 });

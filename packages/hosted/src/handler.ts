@@ -14,7 +14,7 @@ import {
   type CharacterState,
   type WorldSnapshot,
 } from "../../shared/src/index.js";
-import { ConflictError, HttpError } from "./errors.js";
+import { ConflictError, HttpError, isDatabaseUnavailable } from "./errors.js";
 import { logEvent, postOperatorAlert, type LogEvent } from "./logging.js";
 import {
   addPublicEvent,
@@ -516,15 +516,22 @@ export function createHandler(deps: HostedDeps) {
         let database = "ok";
         try {
           await deps.store.getWorldState();
-        } catch {
-          try {
-            await deps.store.ensureSchema();
-            await deps.store.getWorldState();
-          } catch (error) {
+        } catch (first) {
+          let failed: unknown = first;
+          if (!isDatabaseUnavailable(first)) {
+            try {
+              await deps.store.ensureSchema();
+              await deps.store.getWorldState();
+              failed = undefined;
+            } catch (error) {
+              failed = error;
+            }
+          }
+          if (failed) {
             database = "error";
             log({
               level: "error",
-              msg: `health database probe failed: ${errorMessage(error).slice(0, 180)}`,
+              msg: `health database probe failed: ${errorMessage(failed).slice(0, 180)}`,
               kind: "DATABASE_UNAVAILABLE",
               requestId,
             });
@@ -552,6 +559,11 @@ export function createHandler(deps: HostedDeps) {
           path,
           method,
         });
+        if (isDatabaseUnavailable(error))
+          return send(response, 503, {
+            error: "DATABASE_UNAVAILABLE",
+            requestId,
+          });
       }
 
       const viewerId = await deps.sessionUserId(request).catch(() => null);
@@ -1373,6 +1385,21 @@ export function createHandler(deps: HostedDeps) {
     } catch (error) {
       if (error instanceof HttpError)
         return send(response, error.status, { error: error.message });
+      if (isDatabaseUnavailable(error)) {
+        log({
+          level: "error",
+          msg: `database unavailable: ${errorMessage(error).slice(0, 180)}`,
+          path,
+          method,
+          requestId,
+          kind: "DATABASE_UNAVAILABLE",
+          durationMs: deps.now() - started,
+        });
+        return send(response, 503, {
+          error: "DATABASE_UNAVAILABLE",
+          requestId,
+        });
+      }
       log({
         level: "error",
         msg: `unhandled hosted handler error: ${errorMessage(error).slice(0, 180)}`,

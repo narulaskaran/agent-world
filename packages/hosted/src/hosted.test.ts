@@ -644,6 +644,38 @@ describe("hosted product surfaces", () => {
     });
   });
 
+  it("returns 503 DATABASE_UNAVAILABLE for state when Neon quota is exceeded", async () => {
+    class QuotaStore extends MemoryStore {
+      override async ensureSchema(): Promise<void> {
+        throw new Error(
+          'Server error (HTTP status 402): {"message":"Your project has exceeded the data transfer quota."}',
+        );
+      }
+    }
+    const state = await invoke(
+      makeHandler(new QuotaStore(), new Map()),
+      "/state",
+    );
+    expect(state.statusCode).toBe(503);
+    expect(state.json().error).toBe("DATABASE_UNAVAILABLE");
+  });
+
+  it("does not retry schema ensure on Neon quota errors", async () => {
+    class QuotaStore extends MemoryStore {
+      ensured = 0;
+      override async getWorldState(): Promise<never> {
+        throw new Error("Server error (HTTP status 402): data transfer quota");
+      }
+      override async ensureSchema(): Promise<void> {
+        this.ensured += 1;
+      }
+    }
+    const store = new QuotaStore();
+    const health = await invoke(makeHandler(store, new Map()), "/health");
+    expect(health.statusCode).toBe(503);
+    expect(store.ensured).toBe(0);
+  });
+
   it("auth-gates wallet routes instead of returning INTERNAL_ERROR when schema ensure fails", async () => {
     class BrokenSchemaStore extends MemoryStore {
       override async ensureSchema(): Promise<void> {
