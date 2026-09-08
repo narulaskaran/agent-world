@@ -21,6 +21,7 @@ export { MemoryStore } from "./memory-store.js";
 export { NeonStore } from "./neon-store.js";
 export { runAutonomy, executeJob, enqueueTick, positionAt } from "./jobs.js";
 export {
+  ARTIFACT_KEEP,
   CLAIM_JOB_SQL,
   MEMORY_KEEP_PER_CHARACTER,
   RELATIONSHIP_KEEP_PER_CHARACTER,

@@ -14,6 +14,7 @@ import type {
 } from "./wallet-payment.js";
 import type {
   AlertRow,
+  BoardCharacterRow,
   CharacterRow,
   ConversationRow,
   CostRow,
@@ -26,7 +27,11 @@ import type {
   ReportRow,
   WorldStateRow,
 } from "./store.js";
-import { MEMORY_KEEP_PER_CHARACTER } from "./store.js";
+import {
+  ARTIFACT_KEEP,
+  MEMORY_KEEP_PER_CHARACTER,
+  RELATIONSHIP_KEEP_PER_CHARACTER,
+} from "./store.js";
 
 class Mutex {
   private chain = Promise.resolve();
@@ -184,6 +189,27 @@ export class MemoryStore implements HostedStore {
       .map(clone);
   }
 
+  async listBoardCharacters(): Promise<BoardCharacterRow[]> {
+    return (await this.listCharacters()).map((row) => ({
+      id: row.id,
+      name: row.name,
+      state: row.state,
+      x: row.x,
+      y: row.y,
+      targetX: row.targetX,
+      targetY: row.targetY,
+      movementStartedAt: row.movementStartedAt,
+      movementArrivesAt: row.movementArrivesAt,
+      intent: row.intent,
+      speech: row.speech,
+      avatarUrl: row.avatarUrl,
+      avatarColor: row.avatarColor,
+      toolActive: row.toolActive,
+      locationId: row.locationId,
+      updatedAt: row.updatedAt,
+    }));
+  }
+
   async getCharacter(idOrName: string): Promise<CharacterRow | null> {
     const direct = this.characters.get(idOrName);
     if (direct) return clone(direct);
@@ -258,15 +284,15 @@ export class MemoryStore implements HostedStore {
     });
   }
 
-  async listMemories(options?: ListBoundOptions): Promise<MemoryRow[]> {
+  async listMemories(options: ListBoundOptions): Promise<MemoryRow[]> {
+    if (!options.characterId)
+      throw new Error("listMemories requires characterId");
     const rows = this.memories.filter(
-      (row) =>
-        row.active &&
-        (!options?.characterId || row.characterId === options.characterId),
+      (row) => row.active && row.characterId === options.characterId,
     );
     return capPerCharacter(
       rows,
-      options?.perCharacterLimit,
+      options.perCharacterLimit ?? MEMORY_KEEP_PER_CHARACTER,
       (left, right) => right.createdAt - left.createdAt,
     ).map(clone);
   }
@@ -295,17 +321,27 @@ export class MemoryStore implements HostedStore {
   }
 
   async listRelationships(
-    options?: ListBoundOptions,
+    options: ListBoundOptions,
   ): Promise<RelationshipRow[]> {
+    if (!options.characterId)
+      throw new Error("listRelationships requires characterId");
     const rows = [...this.relationships.values()].filter(
-      (row) => !options?.characterId || row.characterId === options.characterId,
+      (row) => row.characterId === options.characterId,
     );
     return capPerCharacter(
       rows,
-      options?.perCharacterLimit,
+      options.perCharacterLimit ?? RELATIONSHIP_KEEP_PER_CHARACTER,
       (left, right) =>
         right.updatedAt - left.updatedAt || right.affinity - left.affinity,
     ).map(clone);
+  }
+
+  async getRelationship(
+    characterId: string,
+    otherCharacterId: string,
+  ): Promise<RelationshipRow | null> {
+    const row = this.relationships.get(`${characterId}::${otherCharacterId}`);
+    return row ? clone(row) : null;
   }
 
   async upsertRelationship(row: RelationshipRow): Promise<void> {
@@ -367,6 +403,63 @@ export class MemoryStore implements HostedStore {
     });
   }
 
+  async pruneArtifacts(
+    now: number,
+    keep: number,
+    maxAgeMs: number,
+  ): Promise<number> {
+    return this.locked(() => {
+      const before = this.artifacts.length;
+      this.artifacts = [...this.artifacts]
+        .filter((artifact) => now - artifact.createdAt <= maxAgeMs)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, keep);
+      return before - this.artifacts.length;
+    });
+  }
+
+  async pruneConversations(
+    now: number,
+    keep: number,
+    maxAgeMs: number,
+  ): Promise<number> {
+    return this.locked(() => {
+      const keepIds = new Set(
+        [...this.conversations.values()]
+          .filter((row) => now - row.startedAt <= maxAgeMs)
+          .sort((a, b) => b.startedAt - a.startedAt)
+          .slice(0, keep)
+          .map((row) => row.id),
+      );
+      const removed = [...this.conversations.keys()].filter(
+        (id) => !keepIds.has(id),
+      );
+      for (const id of removed) {
+        this.conversations.delete(id);
+        this.conversationMembers.delete(id);
+      }
+      this.messages = this.messages.filter((row) =>
+        keepIds.has(row.conversationId),
+      );
+      return removed.length;
+    });
+  }
+
+  async pruneQueue(): Promise<number> {
+    return this.locked(() => {
+      const before = this.jobs.size;
+      this.jobs = new Map(
+        [...this.jobs.entries()].filter(
+          ([, job]) =>
+            job.status !== "completed" &&
+            job.status !== "expired" &&
+            job.status !== "failed",
+        ),
+      );
+      return before - this.jobs.size;
+    });
+  }
+
   async enqueueJob(
     row: Omit<QueueJob, "status" | "attemptCount"> & {
       status?: string;
@@ -392,30 +485,39 @@ export class MemoryStore implements HostedStore {
     });
   }
 
-  async claimNextJob(now: number, leaseMs: number): Promise<QueueJob | null> {
+  async claimJobs(
+    now: number,
+    leaseMs: number,
+    limit: number,
+  ): Promise<QueueJob[]> {
     return this.locked(() => {
-      const candidate = [...this.jobs.values()]
+      const take = Math.max(0, Math.floor(limit));
+      const candidates = [...this.jobs.values()]
         .filter(
           (job) =>
             job.status === "pending" &&
             job.notBefore <= now &&
             job.expiresAt > now,
         )
-        .sort(
-          (a, b) => b.priority - a.priority || a.createdAt - b.createdAt,
-        )[0];
-      if (!candidate) return null;
-      candidate.status = "processing";
-      candidate.notBefore = now + leaseMs;
-      candidate.attemptCount += 1;
-      return clone(candidate);
+        .sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt)
+        .slice(0, take);
+      return candidates.map((candidate) => {
+        candidate.status = "processing";
+        candidate.notBefore = now + leaseMs;
+        candidate.attemptCount += 1;
+        return clone(candidate);
+      });
     });
+  }
+
+  async claimNextJob(now: number, leaseMs: number): Promise<QueueJob | null> {
+    const claimed = await this.claimJobs(now, leaseMs, 1);
+    return claimed[0] ?? null;
   }
 
   async completeJob(id: string): Promise<void> {
     await this.locked(() => {
-      const job = this.jobs.get(id);
-      if (job) job.status = "completed";
+      this.jobs.delete(id);
     });
   }
 
@@ -455,9 +557,9 @@ export class MemoryStore implements HostedStore {
   async expireJobs(now: number): Promise<number> {
     return this.locked(() => {
       let expired = 0;
-      for (const job of this.jobs.values()) {
+      for (const [id, job] of this.jobs) {
         if (job.status === "pending" && job.expiresAt <= now) {
-          job.status = "expired";
+          this.jobs.delete(id);
           expired += 1;
         }
       }
@@ -515,11 +617,19 @@ export class MemoryStore implements HostedStore {
   }
 
   async listArtifacts(): Promise<WorldArtifact[]> {
-    return this.artifacts.map(clone);
+    return [...this.artifacts]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, ARTIFACT_KEEP)
+      .map(clone);
   }
 
   async addArtifact(row: WorldArtifact): Promise<void> {
-    await this.locked(() => this.artifacts.push(clone(row)));
+    await this.locked(() => {
+      this.artifacts.push(clone(row));
+      this.artifacts = [...this.artifacts]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, ARTIFACT_KEEP);
+    });
   }
 
   async addReport(row: ReportRow): Promise<void> {

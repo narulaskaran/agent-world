@@ -11,6 +11,7 @@ import {
   WORLD_LOCATIONS,
   hashString,
   nameColor,
+  type CharacterInspect,
   type CharacterState,
   type WorldSnapshot,
 } from "../../shared/src/index.js";
@@ -24,7 +25,7 @@ import {
   type AutonomyOptions,
 } from "./jobs.js";
 import { ifNoneMatchHits, worldSnapshotEtag } from "./observe.js";
-import type { CharacterRow, HostedStore } from "./store.js";
+import type { BoardCharacterRow, CharacterRow, HostedStore } from "./store.js";
 import {
   MEMORY_KEEP_PER_CHARACTER,
   RELATIONSHIP_KEEP_PER_CHARACTER,
@@ -177,18 +178,12 @@ export const hasCronAccess = (env: HostedEnv, request: Request): boolean =>
     header(request, "authorization") === `Bearer ${env.cronSecret}`,
   );
 
-const characterView = (row: CharacterRow, now: number) => {
+const boardCharacterView = (row: BoardCharacterRow, now: number) => {
   const pos = positionAt(row, now);
   const moving = row.state === "moving" && now < row.movementArrivesAt;
   return {
     id: row.id,
-    ownerId: row.ownerId,
     name: row.name,
-    personality: row.personality,
-    model: row.model,
-    dailyBudgetMicros: row.dailyBudgetMicros,
-    spentTodayMicros: row.spentTodayMicros,
-    decisionIntervalSeconds: row.decisionIntervalSeconds,
     state: (moving
       ? "moving"
       : row.state === "moving"
@@ -203,9 +198,65 @@ const characterView = (row: CharacterRow, now: number) => {
     avatarUrl: row.avatarUrl,
     avatarColor: row.avatarColor,
     toolActive: row.toolActive,
-    reputation: row.reputation,
     locationId: row.locationId,
     updatedAt: row.updatedAt,
+  };
+};
+
+const characterView = (row: CharacterRow, now: number) => {
+  const board = boardCharacterView(row, now);
+  return {
+    ...board,
+    ownerId: row.ownerId,
+    personality: row.personality,
+    model: row.model,
+    dailyBudgetMicros: row.dailyBudgetMicros,
+    spentTodayMicros: row.spentTodayMicros,
+    decisionIntervalSeconds: row.decisionIntervalSeconds,
+    reputation: row.reputation,
+  };
+};
+
+const inspectCharacter = async (
+  store: HostedStore,
+  row: CharacterRow,
+): Promise<CharacterInspect> => {
+  const [memoryRows, relationshipRows, characterRows] = await Promise.all([
+    store.listMemories({
+      characterId: row.id,
+      perCharacterLimit: MEMORY_KEEP_PER_CHARACTER,
+    }),
+    store.listRelationships({
+      characterId: row.id,
+      perCharacterLimit: RELATIONSHIP_KEEP_PER_CHARACTER,
+    }),
+    store.listBoardCharacters(),
+  ]);
+  const names = new Map(characterRows.map((item) => [item.id, item.name]));
+  return {
+    id: row.id,
+    name: row.name,
+    personality: row.personality,
+    model: row.model,
+    dailyBudgetMicros: row.dailyBudgetMicros,
+    spentTodayMicros: row.spentTodayMicros,
+    decisionIntervalSeconds: row.decisionIntervalSeconds,
+    reputation: row.reputation,
+    locationId: row.locationId,
+    memories: memoryRows.map((memory) => ({
+      id: memory.id,
+      kind: memory.kind,
+      bullet: memory.bullet,
+      subject: memory.subject,
+      confidence: memory.confidence,
+      createdAt: memory.createdAt,
+    })),
+    relationships: relationshipRows.map((relationship) => ({
+      characterId: relationship.otherCharacterId,
+      characterName: names.get(relationship.otherCharacterId) ?? "Unknown",
+      impression: relationship.impression,
+      affinity: relationship.affinity,
+    })),
   };
 };
 
@@ -230,20 +281,9 @@ const worldSnapshot = async (
   connectedViewers: number,
   inviteOnly: boolean,
 ): Promise<WorldSnapshot> => {
-  const [
-    state,
-    characterRows,
-    memoryRows,
-    relationshipRows,
-    eventRows,
-    artifacts,
-  ] = await Promise.all([
+  const [state, characterRows, eventRows, artifacts] = await Promise.all([
     store.getWorldState(),
-    store.listCharacters(),
-    store.listMemories({ perCharacterLimit: MEMORY_KEEP_PER_CHARACTER }),
-    store.listRelationships({
-      perCharacterLimit: RELATIONSHIP_KEEP_PER_CHARACTER,
-    }),
+    store.listBoardCharacters(),
     store.listEvents({
       limit: 100,
       viewerCharacterIds,
@@ -251,30 +291,7 @@ const worldSnapshot = async (
     }),
     store.listArtifacts(),
   ]);
-  const names = new Map(characterRows.map((row) => [row.id, row.name]));
-  const characters = characterRows.map((row) => {
-    const memories = memoryRows
-      .filter((memory) => memory.characterId === row.id)
-      .map((memory) => ({
-        id: memory.id,
-        kind: memory.kind,
-        bullet: memory.bullet,
-        subject: memory.subject,
-        confidence: memory.confidence,
-        createdAt: memory.createdAt,
-      }));
-    const relationships = relationshipRows
-      .filter((relationship) => relationship.characterId === row.id)
-      .map((relationship) => ({
-        characterId: relationship.otherCharacterId,
-        characterName: names.get(relationship.otherCharacterId) ?? "Unknown",
-        impression: relationship.impression,
-        affinity: relationship.affinity,
-      }));
-    const view = characterView(row, now);
-    const { ownerId: _ownerId, ...publicView } = view;
-    return { ...publicView, memories, relationships };
-  });
+  const characters = characterRows.map((row) => boardCharacterView(row, now));
   return {
     characters,
     events: eventRows.map((event) => ({
@@ -564,22 +581,25 @@ export function createHandler(deps: HostedDeps) {
         );
       }
 
-      try {
-        await deps.store.ensureSchema();
-      } catch (error) {
-        log({
-          level: "error",
-          msg: `schema ensure failed: ${errorMessage(error).slice(0, 180)}`,
-          kind: "SCHEMA_UNAVAILABLE",
-          requestId,
-          path,
-          method,
-        });
-        if (isDatabaseUnavailable(error))
-          return send(response, 503, {
-            error: "DATABASE_UNAVAILABLE",
+      const isObserve = path === "/state" && method === "GET";
+      if (!isObserve) {
+        try {
+          await deps.store.ensureSchema();
+        } catch (error) {
+          log({
+            level: "error",
+            msg: `schema ensure failed: ${errorMessage(error).slice(0, 180)}`,
+            kind: "SCHEMA_UNAVAILABLE",
             requestId,
+            path,
+            method,
           });
+          if (isDatabaseUnavailable(error))
+            return send(response, 503, {
+              error: "DATABASE_UNAVAILABLE",
+              requestId,
+            });
+        }
       }
 
       const wantsWalletSchema =
@@ -988,6 +1008,14 @@ export function createHandler(deps: HostedDeps) {
       if (characterMatch) {
         const key = decodeURIComponent(characterMatch[1]!);
         const action = characterMatch[2];
+        if (!action && method === "GET") {
+          const row = await deps.store.getCharacter(key);
+          if (!row)
+            return send(response, 404, { error: "Character not found" });
+          return send(response, 200, {
+            character: await inspectCharacter(deps.store, row),
+          });
+        }
         const ownerId = await requireUser(deps, request, response);
         if (!ownerId) return;
         const owned = await deps.store.findOwned(key, ownerId);

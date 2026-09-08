@@ -143,11 +143,12 @@ export interface PublicRelationship {
 export interface PublicCharacter {
   id: string;
   name: string;
-  personality: string;
-  model: string;
-  dailyBudgetMicros: number;
-  spentTodayMicros: number;
-  decisionIntervalSeconds: number;
+  /** Inspector-only; omitted from hosted spectator `/state`. */
+  personality?: string;
+  model?: string;
+  dailyBudgetMicros?: number;
+  spentTodayMicros?: number;
+  decisionIntervalSeconds?: number;
   state: CharacterState;
   x: number;
   y: number;
@@ -158,11 +159,26 @@ export interface PublicCharacter {
   avatarUrl: string | null;
   avatarColor: string;
   toolActive: boolean;
+  reputation?: number;
+  locationId: WorldLocationId | null;
+  memories?: PublicMemory[];
+  relationships?: PublicRelationship[];
+  updatedAt: number;
+}
+
+/** Personality, memories, and relationships for the selected inspector. */
+export interface CharacterInspect {
+  id: string;
+  name: string;
+  personality: string;
+  model: string;
+  dailyBudgetMicros: number;
+  spentTodayMicros: number;
+  decisionIntervalSeconds: number;
   reputation: number;
   locationId: WorldLocationId | null;
   memories: PublicMemory[];
   relationships: PublicRelationship[];
-  updatedAt: number;
 }
 
 export type WorldEventKind =
@@ -187,11 +203,7 @@ export interface WorldEvent {
 }
 
 export type WorldLocationId =
-  | "plaza"
-  | "cafe"
-  | "park"
-  | "library"
-  | "workshop";
+  "plaza" | "cafe" | "park" | "library" | "workshop";
 
 export interface WorldLocation {
   id: WorldLocationId;

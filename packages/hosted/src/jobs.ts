@@ -7,6 +7,7 @@ import {
 } from "../../shared/src/index.js";
 import { logEvent } from "./logging.js";
 import type { CharacterRow, HostedStore, QueueJob } from "./store.js";
+import { ARTIFACT_KEEP } from "./store.js";
 
 export interface AutonomyOptions {
   now: () => number;
@@ -23,7 +24,14 @@ const MOVE_SPEED_PER_SECOND = 92;
 const newId = () => crypto.randomUUID();
 
 export function positionAt(
-  character: CharacterRow,
+  character: {
+    x: number;
+    y: number;
+    targetX: number;
+    targetY: number;
+    movementStartedAt: number;
+    movementArrivesAt: number;
+  },
   now: number,
 ): { x: number; y: number } {
   if (
@@ -159,9 +167,7 @@ const bumpRelationship = async (
   impression: string,
   now: number,
 ) => {
-  const existing = (await store.listRelationships()).find(
-    (row) => row.characterId === left.id && row.otherCharacterId === right.id,
-  );
+  const existing = await store.getRelationship(left.id, right.id);
   const affinity = Math.min(100, (existing?.affinity ?? 0) + 2);
   await store.upsertRelationship({
     characterId: left.id,
@@ -290,7 +296,9 @@ const executeTick = async (
   await settlePosition(store, character, now);
   if (roll === 2) {
     const location =
-      WORLD_LOCATIONS[hashString(`${character.id}:inspect:${now}`) % WORLD_LOCATIONS.length]!;
+      WORLD_LOCATIONS[
+        hashString(`${character.id}:inspect:${now}`) % WORLD_LOCATIONS.length
+      ]!;
     const point = waypointFor(location.id, `${character.id}:inspect`);
     await startMovement(
       store,
@@ -344,7 +352,9 @@ const executeTick = async (
     return;
   }
   const location =
-    WORLD_LOCATIONS[hashString(`${character.id}:walk:${now}`) % WORLD_LOCATIONS.length]!;
+    WORLD_LOCATIONS[
+      hashString(`${character.id}:walk:${now}`) % WORLD_LOCATIONS.length
+    ]!;
   const point = waypointFor(location.id, `${character.id}:${now}`);
   await startMovement(
     store,
@@ -479,14 +489,21 @@ export async function runAutonomy(
   const recovered = await store.recoverStaleJobs(now);
   await store.expireJobs(now);
   await store.pruneEvents(now, options.eventKeep, options.eventMaxAgeMs);
+  await store.pruneArtifacts(now, ARTIFACT_KEEP, options.eventMaxAgeMs);
+  await store.pruneConversations(now, options.eventKeep, options.eventMaxAgeMs);
+  await store.pruneQueue();
   if (world.simulationPaused) {
-    return { processed: 0, pendingDue: await store.countDueJobs(now), recovered };
+    return {
+      processed: 0,
+      pendingDue: await store.countDueJobs(now),
+      recovered,
+    };
   }
   await scheduleDueTicks(store, now);
+  const jobs = await store.claimJobs(now, options.leaseMs, options.limit);
   let processed = 0;
-  for (; processed < options.limit; processed += 1) {
-    const job = await store.claimNextJob(now, options.leaseMs);
-    if (!job) break;
+  for (const job of jobs) {
+    processed += 1;
     try {
       await executeJob(store, job, now);
       await store.completeJob(job.id);

@@ -31,6 +31,37 @@ describe("API client", () => {
     expect(new Headers(init?.headers).get("if-none-match")).toBe('W/"abc"');
   });
 
+  it("loads inspector details for a selected character", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            character: {
+              id: "moss",
+              name: "Moss",
+              personality: "Curious about tiny gardens",
+              model: "z-ai/glm-5.3-flash",
+              dailyBudgetMicros: 500_000,
+              spentTodayMicros: 0,
+              decisionIntervalSeconds: 60,
+              reputation: 2,
+              locationId: "plaza",
+              memories: [],
+              relationships: [],
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.inspect("moss");
+    expect(result.character.personality).toBe("Curious about tiny gardens");
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(
+      "/api/characters/moss",
+    );
+  });
+
   it("surfaces DATABASE_UNAVAILABLE 503 as an ApiError", async () => {
     vi.stubGlobal(
       "fetch",

@@ -145,17 +145,38 @@ export interface WorldStateRow {
 
 export const MEMORY_KEEP_PER_CHARACTER = 50;
 export const RELATIONSHIP_KEEP_PER_CHARACTER = 50;
+export const ARTIFACT_KEEP = 80;
 
 export type ListBoundOptions = {
-  characterId?: string;
+  characterId: string;
   perCharacterLimit?: number;
 };
+
+/** Movement + label fields the hosted spectator board needs to render and pick. */
+export interface BoardCharacterRow {
+  id: string;
+  name: string;
+  state: string;
+  x: number;
+  y: number;
+  targetX: number;
+  targetY: number;
+  movementStartedAt: number;
+  movementArrivesAt: number;
+  intent: string;
+  speech: string | null;
+  avatarUrl: string | null;
+  avatarColor: string;
+  toolActive: boolean;
+  locationId: WorldLocationId | null;
+  updatedAt: number;
+}
 
 export const CLAIM_JOB_SQL = `WITH candidate AS (
   SELECT id FROM character_queue
   WHERE status = 'pending' AND not_before <= $1 AND expires_at > $1
   ORDER BY priority DESC, created_at ASC
-  LIMIT 1
+  LIMIT $3
   FOR UPDATE SKIP LOCKED
 ) UPDATE character_queue AS queue
   SET status = 'processing', claimed_at = $1, not_before = $2, attempt_count = queue.attempt_count + 1
@@ -174,6 +195,7 @@ export interface HostedStore {
   resetWorld(now: number): Promise<void>;
 
   listCharacters(): Promise<CharacterRow[]>;
+  listBoardCharacters(): Promise<BoardCharacterRow[]>;
   getCharacter(idOrName: string): Promise<CharacterRow | null>;
   findOwned(key: string, ownerId: string): Promise<CharacterRow | null>;
   listOwnedIds(ownerId: string): Promise<string[]>;
@@ -182,10 +204,14 @@ export interface HostedStore {
   updateCharacter(id: string, patch: Partial<CharacterRow>): Promise<void>;
   deleteCharacter(id: string): Promise<void>;
 
-  listMemories(options?: ListBoundOptions): Promise<MemoryRow[]>;
+  listMemories(options: ListBoundOptions): Promise<MemoryRow[]>;
   addMemory(row: MemoryRow): Promise<void>;
   replaceMemories(characterId: string, rows: MemoryRow[]): Promise<void>;
-  listRelationships(options?: ListBoundOptions): Promise<RelationshipRow[]>;
+  listRelationships(options: ListBoundOptions): Promise<RelationshipRow[]>;
+  getRelationship(
+    characterId: string,
+    otherCharacterId: string,
+  ): Promise<RelationshipRow | null>;
   upsertRelationship(row: RelationshipRow): Promise<void>;
 
   addEvent(row: EventRow): Promise<void>;
@@ -196,6 +222,13 @@ export interface HostedStore {
   }): Promise<EventRow[]>;
   hideEvent(id: string): Promise<boolean>;
   pruneEvents(now: number, keep: number, maxAgeMs: number): Promise<number>;
+  pruneArtifacts(now: number, keep: number, maxAgeMs: number): Promise<number>;
+  pruneConversations(
+    now: number,
+    keep: number,
+    maxAgeMs: number,
+  ): Promise<number>;
+  pruneQueue(): Promise<number>;
 
   enqueueJob(
     row: Omit<QueueJob, "status" | "attemptCount"> & {
@@ -203,6 +236,7 @@ export interface HostedStore {
       attemptCount?: number;
     },
   ): Promise<string | null>;
+  claimJobs(now: number, leaseMs: number, limit: number): Promise<QueueJob[]>;
   claimNextJob(now: number, leaseMs: number): Promise<QueueJob | null>;
   completeJob(id: string): Promise<void>;
   failJob(

@@ -397,7 +397,7 @@ describe("WorldEngine serverless jobs", () => {
     expect(
       repository
         .listPublicCharacters()
-        .every((character) => character.memories.length === 2),
+        .every((character) => (character.memories ?? []).length === 2),
     ).toBe(true);
   });
 

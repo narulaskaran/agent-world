@@ -17,6 +17,7 @@ import type {
 } from "./wallet-payment.js";
 import type {
   AlertRow,
+  BoardCharacterRow,
   CharacterRow,
   ConversationRow,
   CostRow,
@@ -29,7 +30,11 @@ import type {
   ReportRow,
   WorldStateRow,
 } from "./store.js";
-import { MEMORY_KEEP_PER_CHARACTER } from "./store.js";
+import {
+  ARTIFACT_KEEP,
+  MEMORY_KEEP_PER_CHARACTER,
+  RELATIONSHIP_KEEP_PER_CHARACTER,
+} from "./store.js";
 
 export type NeonSql = ((
   strings: TemplateStringsArray,
@@ -464,6 +469,32 @@ export class NeonStore implements HostedStore {
     return rows.map(mapCharacter);
   }
 
+  async listBoardCharacters(): Promise<BoardCharacterRow[]> {
+    const rows = await this.sql()`SELECT
+        id, name, state, x, y, target_x, target_y, movement_started_at,
+        movement_arrives_at, intent, speech, avatar_url, avatar_color,
+        tool_active, location_id, updated_at
+      FROM characters ORDER BY created_at ASC`;
+    return rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      state: String(row.state),
+      x: Number(row.x),
+      y: Number(row.y),
+      targetX: Number(row.target_x),
+      targetY: Number(row.target_y),
+      movementStartedAt: Number(row.movement_started_at),
+      movementArrivesAt: Number(row.movement_arrives_at),
+      intent: String(row.intent),
+      speech: row.speech ?? null,
+      avatarUrl: row.avatar_url ?? null,
+      avatarColor: String(row.avatar_color),
+      toolActive: Boolean(row.tool_active),
+      locationId: (row.location_id ?? null) as WorldLocationId | null,
+      updatedAt: Number(row.updated_at),
+    }));
+  }
+
   async getCharacter(idOrName: string): Promise<CharacterRow | null> {
     const rows =
       await this.sql()`SELECT * FROM characters WHERE id = ${idOrName} OR lower(name) = lower(${idOrName}) LIMIT 1`;
@@ -550,19 +581,12 @@ export class NeonStore implements HostedStore {
     await sql`DELETE FROM characters WHERE id = ${id}`;
   }
 
-  async listMemories(options?: ListBoundOptions): Promise<MemoryRow[]> {
-    const characterId = options?.characterId;
-    const limit = options?.perCharacterLimit;
-    const rows = characterId
-      ? limit == null
-        ? await this.sql()`SELECT * FROM memories WHERE active = true AND character_id = ${characterId} ORDER BY created_at DESC`
-        : await this.sql()`SELECT * FROM memories WHERE active = true AND character_id = ${characterId} ORDER BY created_at DESC LIMIT ${limit}`
-      : limit == null
-        ? await this.sql()`SELECT * FROM memories WHERE active = true ORDER BY created_at DESC`
-        : await this.sql()`SELECT id, character_id, kind, bullet, subject, confidence, active, created_at FROM (
-            SELECT memories.*, row_number() OVER (PARTITION BY character_id ORDER BY created_at DESC) AS rn
-            FROM memories WHERE active = true
-          ) ranked WHERE rn <= ${limit}`;
+  async listMemories(options: ListBoundOptions): Promise<MemoryRow[]> {
+    const characterId = options.characterId;
+    if (!characterId) throw new Error("listMemories requires characterId");
+    const limit = options.perCharacterLimit ?? MEMORY_KEEP_PER_CHARACTER;
+    const rows =
+      await this.sql()`SELECT * FROM memories WHERE active = true AND character_id = ${characterId} ORDER BY created_at DESC LIMIT ${limit}`;
     return rows.map((row) => ({
       id: row.id,
       characterId: row.character_id,
@@ -596,20 +620,13 @@ export class NeonStore implements HostedStore {
   }
 
   async listRelationships(
-    options?: ListBoundOptions,
+    options: ListBoundOptions,
   ): Promise<RelationshipRow[]> {
-    const characterId = options?.characterId;
-    const limit = options?.perCharacterLimit;
-    const rows = characterId
-      ? limit == null
-        ? await this.sql()`SELECT * FROM relationships WHERE character_id = ${characterId}`
-        : await this.sql()`SELECT * FROM relationships WHERE character_id = ${characterId} ORDER BY updated_at DESC, affinity DESC LIMIT ${limit}`
-      : limit == null
-        ? await this.sql()`SELECT * FROM relationships`
-        : await this.sql()`SELECT character_id, other_character_id, impression, affinity, updated_at FROM (
-            SELECT relationships.*, row_number() OVER (PARTITION BY character_id ORDER BY updated_at DESC, affinity DESC) AS rn
-            FROM relationships
-          ) ranked WHERE rn <= ${limit}`;
+    const characterId = options.characterId;
+    if (!characterId) throw new Error("listRelationships requires characterId");
+    const limit = options.perCharacterLimit ?? RELATIONSHIP_KEEP_PER_CHARACTER;
+    const rows =
+      await this.sql()`SELECT * FROM relationships WHERE character_id = ${characterId} ORDER BY updated_at DESC, affinity DESC LIMIT ${limit}`;
     return rows.map((row) => ({
       characterId: row.character_id,
       otherCharacterId: row.other_character_id,
@@ -617,6 +634,23 @@ export class NeonStore implements HostedStore {
       affinity: Number(row.affinity),
       updatedAt: Number(row.updated_at),
     }));
+  }
+
+  async getRelationship(
+    characterId: string,
+    otherCharacterId: string,
+  ): Promise<RelationshipRow | null> {
+    const rows =
+      await this.sql()`SELECT * FROM relationships WHERE character_id = ${characterId} AND other_character_id = ${otherCharacterId} LIMIT 1`;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      characterId: row.character_id,
+      otherCharacterId: row.other_character_id,
+      impression: row.impression,
+      affinity: Number(row.affinity),
+      updatedAt: Number(row.updated_at),
+    };
   }
 
   async upsertRelationship(row: RelationshipRow): Promise<void> {
@@ -681,6 +715,47 @@ export class NeonStore implements HostedStore {
     return deleted.length;
   }
 
+  async pruneArtifacts(
+    now: number,
+    keep: number,
+    maxAgeMs: number,
+  ): Promise<number> {
+    const cutoff = now - maxAgeMs;
+    const deleted =
+      await this.sql()`DELETE FROM world_artifacts WHERE created_at < ${cutoff} OR id IN (
+        SELECT id FROM world_artifacts ORDER BY created_at DESC OFFSET ${keep}
+      ) RETURNING id`;
+    return deleted.length;
+  }
+
+  async pruneConversations(
+    now: number,
+    keep: number,
+    maxAgeMs: number,
+  ): Promise<number> {
+    const cutoff = now - maxAgeMs;
+    const deleted = await this.sql()`WITH stale AS (
+        SELECT id FROM conversations
+        WHERE started_at < ${cutoff} OR id IN (
+          SELECT id FROM conversations ORDER BY started_at DESC OFFSET ${keep}
+        )
+      ),
+      messages AS (
+        DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM stale)
+      ),
+      members AS (
+        DELETE FROM conversation_members WHERE conversation_id IN (SELECT id FROM stale)
+      )
+      DELETE FROM conversations WHERE id IN (SELECT id FROM stale) RETURNING id`;
+    return deleted.length;
+  }
+
+  async pruneQueue(): Promise<number> {
+    const deleted =
+      await this.sql()`DELETE FROM character_queue WHERE status IN ('completed', 'expired', 'failed') RETURNING id`;
+    return deleted.length;
+  }
+
   async enqueueJob(
     row: Omit<QueueJob, "status" | "attemptCount"> & {
       status?: string;
@@ -702,23 +777,34 @@ export class NeonStore implements HostedStore {
     }
   }
 
-  async claimNextJob(now: number, leaseMs: number): Promise<QueueJob | null> {
+  async claimJobs(
+    now: number,
+    leaseMs: number,
+    limit: number,
+  ): Promise<QueueJob[]> {
+    const take = Math.max(0, Math.floor(limit));
+    if (take === 0) return [];
     const claimed = await this.sql()`WITH candidate AS (
       SELECT id FROM character_queue
       WHERE status = 'pending' AND not_before <= ${now} AND expires_at > ${now}
       ORDER BY priority DESC, created_at ASC
-      LIMIT 1
+      LIMIT ${take}
       FOR UPDATE SKIP LOCKED
     ) UPDATE character_queue AS queue
       SET status = 'processing', claimed_at = ${now}, not_before = ${now + leaseMs},
           attempt_count = COALESCE(queue.attempt_count, 0) + 1
       FROM candidate WHERE queue.id = candidate.id
       RETURNING queue.*`;
-    return claimed[0] ? mapJob(claimed[0]) : null;
+    return claimed.map(mapJob);
+  }
+
+  async claimNextJob(now: number, leaseMs: number): Promise<QueueJob | null> {
+    const claimed = await this.claimJobs(now, leaseMs, 1);
+    return claimed[0] ?? null;
   }
 
   async completeJob(id: string): Promise<void> {
-    await this.sql()`UPDATE character_queue SET status = 'completed' WHERE id = ${id}`;
+    await this.sql()`DELETE FROM character_queue WHERE id = ${id}`;
   }
 
   async failJob(
@@ -743,9 +829,8 @@ export class NeonStore implements HostedStore {
   }
 
   async expireJobs(now: number): Promise<number> {
-    const rows = await this.sql()`UPDATE character_queue SET status = 'expired'
-      WHERE status = 'pending' AND expires_at <= ${now}
-      RETURNING id`;
+    const rows =
+      await this.sql()`DELETE FROM character_queue WHERE status = 'pending' AND expires_at <= ${now} RETURNING id`;
     return rows.length;
   }
 
@@ -808,7 +893,7 @@ export class NeonStore implements HostedStore {
 
   async listArtifacts(): Promise<WorldArtifact[]> {
     const rows =
-      await this.sql()`SELECT * FROM world_artifacts ORDER BY created_at DESC LIMIT 80`;
+      await this.sql()`SELECT * FROM world_artifacts ORDER BY created_at DESC LIMIT ${ARTIFACT_KEEP}`;
     return rows.map((row) => ({
       id: row.id,
       locationId: row.location_id,
@@ -826,6 +911,9 @@ export class NeonStore implements HostedStore {
   async addArtifact(row: WorldArtifact): Promise<void> {
     await this.sql()`INSERT INTO world_artifacts (id, location_id, character_id, character_name, kind, title, body, x, y, created_at)
       VALUES (${row.id}, ${row.locationId}, ${row.characterId}, ${row.characterName}, ${row.kind}, ${row.title}, ${row.body}, ${row.x}, ${row.y}, ${row.createdAt})`;
+    await this.sql()`DELETE FROM world_artifacts WHERE id IN (
+      SELECT id FROM world_artifacts ORDER BY created_at DESC OFFSET ${ARTIFACT_KEEP}
+    )`;
   }
 
   async addReport(row: ReportRow): Promise<void> {

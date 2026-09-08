@@ -1,6 +1,7 @@
 import type {
   ArtifactInput,
   CharacterExport,
+  CharacterInspect,
   CreateCharacterInput,
   DirectiveInput,
   ReportInput,
@@ -153,6 +154,10 @@ export const api = {
   exportCharacter: (name: string) =>
     request<CharacterExport>(
       `/api/characters/${encodeURIComponent(name)}/export`,
+    ),
+  inspect: (id: string) =>
+    request<{ character: CharacterInspect }>(
+      `/api/characters/${encodeURIComponent(id)}`,
     ),
   importCharacter: (input: CharacterExport) =>
     request("/api/characters/import", {

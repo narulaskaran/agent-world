@@ -531,7 +531,7 @@ export class WorldEngine {
           state: item.state,
         }))
         .sort((a, b) => a.distance - b.distance),
-      memories: self.memories.slice(0, 12).map((memory) => ({
+      memories: (self.memories ?? []).slice(0, 12).map((memory) => ({
         kind: memory.kind,
         bullet: memory.bullet,
         subject: memory.subject,

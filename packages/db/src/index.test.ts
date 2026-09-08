@@ -166,7 +166,7 @@ describe("WorldRepository", () => {
     expect(
       repository
         .listPublicCharacters()[0]
-        ?.memories.map((memory) => memory.bullet),
+        ?.memories?.map((memory) => memory.bullet),
     ).toEqual(["Juniper prefers coffee."]);
   });
 

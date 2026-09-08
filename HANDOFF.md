@@ -11,12 +11,16 @@ The Vercel project is connected to this repository and deploys `main` to
 production. Its Neon marketplace resource supplies Postgres and Neon Auth
 environment variables. Migrations `db/migrations/0001_hosted.sql` and
 `db/migrations/0002_hosted.sql` are checked in; `NeonStore.ensureSchema()`
-applies additive 0002 statements at runtime. Wallet/payment DDL from
+applies additive 0002 statements at runtime on mutations and `/api/jobs/run`
+(once per process), never on spectator `GET /api/state`. Wallet/payment DDL from
 `0003_wallet_payment.sql` is best-effort, runs only on wallet routes via
 `ensureWalletSchema()`, and must not run on `/health` or spectator `/state`.
 Neon HTTP 402 data-transfer quota is treated as `DATABASE_UNAVAILABLE` (503)
 rather than opaque 500, and schema ensure stops retrying so it cannot keep
-burning quota.
+burning quota. Spectator `/state` returns a slim board payload; inspector
+lore is `GET /api/characters/:id`. Hosted ticks batch SKIP LOCKED claims,
+point-read relationships, and prune completed queue rows plus artifacts and
+conversations.
 
 Production verification completed successfully for the first hosted milestone
 (auth, owned character, deterministic exploration, owner directive). Follow-up

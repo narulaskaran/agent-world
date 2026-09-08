@@ -9,7 +9,11 @@ import {
 } from "react";
 import { Analytics } from "@vercel/analytics/react";
 import type { FormEvent } from "react";
-import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
+import type {
+  CharacterInspect,
+  PublicCharacter,
+  WorldSnapshot,
+} from "@agent-world/shared";
 import {
   MAX_CHARACTERS_PER_USER,
   MODEL_OPTIONS,
@@ -334,9 +338,40 @@ function CharacterInspector({
   const [artifactTitle, setArtifactTitle] = useState("A small note");
   const [artifactBody, setArtifactBody] = useState("");
   const [reportReason, setReportReason] = useState("");
+  const [detail, setDetail] = useState<CharacterInspect | null>(null);
+  const personality = detail?.personality ?? character.personality;
+  const memories = detail?.memories ?? character.memories ?? [];
+  const relationships = detail?.relationships ?? character.relationships ?? [];
+  const spentTodayMicros =
+    detail?.spentTodayMicros ?? character.spentTodayMicros ?? 0;
+  const dailyBudgetMicros =
+    detail?.dailyBudgetMicros ?? character.dailyBudgetMicros ?? 0;
+  const reputation = detail?.reputation ?? character.reputation ?? 0;
+  const modelId = detail?.model ?? character.model;
+  const decisionIntervalSeconds =
+    detail?.decisionIntervalSeconds ?? character.decisionIntervalSeconds ?? 60;
   const modelLabel =
-    MODEL_OPTIONS.find((model) => model.id === character.model)?.label ??
-    character.model;
+    MODEL_OPTIONS.find((model) => model.id === modelId)?.label ??
+    modelId ??
+    "Unknown model";
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetail(null);
+    setError("");
+    void api
+      .inspect(character.id)
+      .then((payload) => {
+        if (!cancelled) setDetail(payload.character);
+      })
+      .catch((caught) => {
+        if (!cancelled)
+          setError(caught instanceof Error ? caught.message : String(caught));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [character.id]);
 
   const perform = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -377,15 +412,15 @@ function CharacterInspector({
           <div className="character-name-line">
             <h2>{character.name}</h2>
             <span className="budget-summary">
-              Spent {formatUsd(character.spentTodayMicros)} of{" "}
-              {formatUsd(character.dailyBudgetMicros)}
+              Spent {formatUsd(spentTodayMicros)} of{" "}
+              {formatUsd(dailyBudgetMicros)}
             </span>
           </div>
           <p className="model-label">
             {modelLabel}
             {character.locationId ? ` · ${character.locationId}` : ""}
           </p>
-          <p className="model-label">Reputation {character.reputation ?? 0}</p>
+          <p className="model-label">Reputation {reputation}</p>
         </div>
       </div>
       <div
@@ -414,6 +449,11 @@ function CharacterInspector({
       </div>
 
       <div className="inspector-content">
+        {error && tab !== "controls" ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
         {tab === "overview" && (
           <div className="inspector-pane" role="tabpanel">
             <section>
@@ -449,21 +489,30 @@ function CharacterInspector({
             )}
             <section>
               <h3>Personality</h3>
-              <p>{character.personality}</p>
+              <p>
+                {personality ??
+                  (detail || error
+                    ? "No personality on record."
+                    : "Loading details…")}
+              </p>
             </section>
             <section>
               <h3>
-                Relationships <span>{character.relationships.length}</span>
+                Relationships <span>{relationships.length}</span>
               </h3>
-              {character.relationships.length ? (
-                character.relationships.map((relationship) => (
+              {relationships.length ? (
+                relationships.map((relationship) => (
                   <div className="relationship" key={relationship.characterId}>
                     <strong>{relationship.characterName}</strong>
                     <p>{relationship.impression}</p>
                   </div>
                 ))
               ) : (
-                <p className="empty-copy">Hasn't gotten to know anyone yet.</p>
+                <p className="empty-copy">
+                  {detail
+                    ? "Hasn't gotten to know anyone yet."
+                    : "Loading details…"}
+                </p>
               )}
             </section>
           </div>
@@ -473,14 +522,16 @@ function CharacterInspector({
           <div className="inspector-pane" role="tabpanel">
             <section>
               <h3>What {character.name} remembers</h3>
-              {character.memories.length ? (
+              {memories.length ? (
                 <ul className="memory-list">
-                  {character.memories.map((memory) => (
+                  {memories.map((memory) => (
                     <li key={memory.id}>{memory.bullet}</li>
                   ))}
                 </ul>
               ) : (
-                <p className="empty-copy">No lasting memories yet.</p>
+                <p className="empty-copy">
+                  {detail ? "No lasting memories yet." : "Loading details…"}
+                </p>
               )}
             </section>
           </div>
@@ -500,10 +551,7 @@ function CharacterInspector({
               <div className="owner-title">
                 <span>Owner controls</span>
                 <span>
-                  {formatUsd(
-                    character.dailyBudgetMicros - character.spentTodayMicros,
-                  )}{" "}
-                  left
+                  {formatUsd(dailyBudgetMicros - spentTodayMicros)} left
                 </span>
               </div>
               <div className="segmented compact">
@@ -550,7 +598,8 @@ function CharacterInspector({
                 <label>
                   Model
                   <select
-                    value={character.model}
+                    value={modelId ?? MODEL_OPTIONS[0].id}
+                    disabled={busy || !detail}
                     onChange={(event) =>
                       void perform(() =>
                         api.update(character.name, {
@@ -569,7 +618,8 @@ function CharacterInspector({
                 <label>
                   Think every
                   <select
-                    value={character.decisionIntervalSeconds}
+                    value={decisionIntervalSeconds}
+                    disabled={busy || !detail}
                     onChange={(event) =>
                       void perform(() =>
                         api.update(character.name, {
@@ -590,14 +640,17 @@ function CharacterInspector({
                   <div className="money-input">
                     <span>$</span>
                     <input
-                      key={character.dailyBudgetMicros}
+                      key={dailyBudgetMicros}
                       type="number"
                       min="0.05"
                       max="2"
                       step="0.05"
-                      defaultValue={(
-                        character.dailyBudgetMicros / 1_000_000
-                      ).toFixed(2)}
+                      defaultValue={
+                        dailyBudgetMicros
+                          ? (dailyBudgetMicros / 1_000_000).toFixed(2)
+                          : ""
+                      }
+                      disabled={busy || !detail}
                       onBlur={(event) =>
                         void perform(() =>
                           api.update(character.name, {

@@ -311,6 +311,7 @@ describe("hosted queue and transaction semantics", () => {
   it("keeps the Postgres SKIP LOCKED claim shape", () => {
     expect(CLAIM_JOB_SQL).toContain("FOR UPDATE SKIP LOCKED");
     expect(CLAIM_JOB_SQL).toContain("status = 'processing'");
+    expect(CLAIM_JOB_SQL).toContain("LIMIT $3");
   });
 
   it("lets only one concurrent claim win a pending job", async () => {
@@ -335,6 +336,103 @@ describe("hosted queue and transaction semantics", () => {
     expect(won).toHaveLength(1);
     expect(won[0]?.id).toBe("job-1");
     expect((await store.getJob("job-1"))?.status).toBe("processing");
+  });
+
+  it("claims a batch of pending jobs in one SKIP LOCKED pass", async () => {
+    const store = new MemoryStore();
+    const character = await seedCharacter(store, "user-a", "Moss");
+    for (const id of ["job-a", "job-b", "job-c"]) {
+      await store.enqueueJob({
+        id,
+        characterId: character.id,
+        kind: "tick",
+        payload: {},
+        priority: 10,
+        dedupeKey: id,
+        notBefore: 0,
+        expiresAt: Date.now() + 60_000,
+        createdAt: Date.now(),
+      });
+    }
+    const claimed = await store.claimJobs(Date.now(), 120_000, 2);
+    expect(claimed.map((job) => job.id)).toEqual(["job-a", "job-b"]);
+    expect((await store.getJob("job-c"))?.status).toBe("pending");
+  });
+
+  it("prunes completed queue rows, extra artifacts, and old conversations", async () => {
+    const store = new MemoryStore();
+    const character = await seedCharacter(store, "user-a", "Moss");
+    await store.enqueueJob({
+      id: "done",
+      characterId: character.id,
+      kind: "tick",
+      payload: {},
+      priority: 10,
+      dedupeKey: null,
+      notBefore: 0,
+      expiresAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+    });
+    const job = await store.claimNextJob(Date.now(), 120_000);
+    expect(job?.id).toBe("done");
+    await store.completeJob("done");
+    expect(await store.getJob("done")).toBeNull();
+    await store.jobs.set("leftover", {
+      id: "leftover",
+      characterId: character.id,
+      kind: "tick",
+      payload: {},
+      priority: 10,
+      dedupeKey: null,
+      notBefore: 0,
+      expiresAt: Date.now() + 60_000,
+      status: "completed",
+      attemptCount: 1,
+      createdAt: Date.now(),
+    });
+    expect(await store.pruneQueue()).toBe(1);
+    expect(await store.getJob("leftover")).toBeNull();
+    for (let index = 0; index < 85; index += 1) {
+      await store.addArtifact({
+        id: `note-${index}`,
+        locationId: "plaza",
+        characterId: character.id,
+        characterName: "Moss",
+        kind: "note",
+        title: `Note ${index}`,
+        body: "Left behind.",
+        x: 455,
+        y: 275,
+        createdAt: 1_000 + index,
+      });
+    }
+    expect((await store.listArtifacts()).length).toBe(80);
+    await store.insertConversation(
+      {
+        id: "old-chat",
+        characterAId: character.id,
+        characterBId: "other",
+        status: "active",
+        messageCount: 1,
+        visibility: "public",
+        locationId: "plaza",
+        startedAt: 1_000,
+      },
+      [character.id],
+    );
+    await store.addConversationMessage({
+      id: "msg-1",
+      conversationId: "old-chat",
+      characterId: character.id,
+      characterName: "Moss",
+      turn: 1,
+      text: "Hello",
+      createdAt: 1_000,
+    });
+    const pruned = await store.pruneConversations(100_000, 10, 1_000);
+    expect(pruned).toBe(1);
+    expect(store.conversations.has("old-chat")).toBe(false);
+    expect(store.messages).toHaveLength(0);
   });
 
   it("recovers stale processing jobs so a later worker can claim them", async () => {
@@ -412,7 +510,75 @@ describe("hosted queue and transaction semantics", () => {
     });
     expect(first.processed).toBe(1);
     expect(second.processed).toBe(0);
-    expect((await store.getJob("once"))?.status).toBe("completed");
+    expect(await store.getJob("once")).toBeNull();
+  });
+
+  it("exports memories for one character id only", async () => {
+    class SpyStore extends MemoryStore {
+      memoryIds: string[] = [];
+      override async listMemories(options: {
+        characterId: string;
+        perCharacterLimit?: number;
+      }) {
+        this.memoryIds.push(options.characterId);
+        return super.listMemories(options);
+      }
+    }
+    const store = new SpyStore();
+    const moss = await seedCharacter(store, "user-a", "Moss");
+    await seedCharacter(store, "user-a", "Juniper");
+    const sessions = new Map<string, string | null>([["a=1", "user-a"]]);
+    const handler = makeHandler(store, sessions);
+    const exported = await invoke(handler, `/characters/${moss.id}/export`, {
+      cookie: "a=1",
+    });
+    expect(exported.statusCode).toBe(200);
+    expect(store.memoryIds).toEqual([moss.id]);
+  });
+
+  it("point-reads relationships during ticks instead of dumping the table", async () => {
+    class SpyStore extends MemoryStore {
+      dumps = 0;
+      pointReads = 0;
+      override async listRelationships(options: {
+        characterId: string;
+        perCharacterLimit?: number;
+      }) {
+        this.dumps += 1;
+        return super.listRelationships(options);
+      }
+      override async getRelationship(
+        characterId: string,
+        otherCharacterId: string,
+      ) {
+        this.pointReads += 1;
+        return super.getRelationship(characterId, otherCharacterId);
+      }
+    }
+    const store = new SpyStore();
+    const moss = await seedCharacter(store, "user-a", "Moss");
+    const juniper = await seedCharacter(store, "user-b", "Juniper");
+    await executeJob(
+      store,
+      {
+        id: "meet",
+        characterId: moss.id,
+        kind: "first_mission",
+        payload: { mission: "meet" },
+        priority: 100,
+        dedupeKey: "first_mission",
+        notBefore: 0,
+        expiresAt: Date.now() + 60_000,
+        status: "processing",
+        attemptCount: 1,
+        createdAt: Date.now(),
+      },
+      Date.now(),
+    );
+    expect(store.dumps).toBe(0);
+    expect(store.pointReads).toBeGreaterThan(0);
+    const row = await store.getRelationship(moss.id, juniper.id);
+    expect(row?.affinity).toBe(2);
   });
 });
 
@@ -648,7 +814,7 @@ describe("hosted product surfaces", () => {
 
   it("returns 503 DATABASE_UNAVAILABLE for state when Neon quota is exceeded", async () => {
     class QuotaStore extends MemoryStore {
-      override async ensureSchema(): Promise<void> {
+      override async getWorldState(): Promise<never> {
         throw new Error(
           'Server error (HTTP status 402): {"message":"Your project has exceeded the data transfer quota."}',
         );
@@ -691,6 +857,26 @@ describe("hosted product surfaces", () => {
     const wallet = await invoke(handler, "/wallet");
     expect(wallet.statusCode).toBe(401);
     expect(wallet.json().error).not.toBe("INTERNAL_ERROR");
+  });
+
+  it("does not run ensureSchema on spectator GET /state", async () => {
+    class SpyStore extends MemoryStore {
+      ensures = 0;
+      override async ensureSchema(): Promise<void> {
+        this.ensures += 1;
+      }
+    }
+    const store = new SpyStore();
+    await seedCharacter(store, "user-a", "Moss", 1_000);
+    const handler = makeHandler(store, new Map());
+    const state = await invoke(handler, "/state");
+    expect(state.statusCode).toBe(200);
+    expect(store.ensures).toBe(0);
+    const drained = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(drained.statusCode).toBe(200);
+    expect(store.ensures).toBeGreaterThan(0);
   });
 
   it("keeps spectator state read-only without draining jobs or writing presence", async () => {
@@ -757,7 +943,37 @@ describe("hosted product surfaces", () => {
     );
   });
 
-  it("caps public snapshot memories and relationships per character", async () => {
+  it("omits personality, memories, and relationships from spectator state", async () => {
+    const store = new MemoryStore();
+    const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
+    await store.addMemory({
+      id: "mem-1",
+      characterId: moss.id,
+      kind: "fact",
+      bullet: "Noticed the plaza fountain",
+      subject: "plaza",
+      confidence: 0.7,
+      active: true,
+      createdAt: 1_000,
+    });
+    await store.upsertRelationship({
+      characterId: moss.id,
+      otherCharacterId: "other-1",
+      impression: "Met a neighbor",
+      affinity: 4,
+      updatedAt: 1_000,
+    });
+    const handler = makeHandler(store, new Map(), { now: () => 5_000 });
+    const state = await invoke(handler, "/state");
+    const character = state.json().snapshot.characters[0];
+    expect(character.id).toBe(moss.id);
+    expect(character.speech).toBeNull();
+    expect(character.personality).toBeUndefined();
+    expect(character.memories).toBeUndefined();
+    expect(character.relationships).toBeUndefined();
+  });
+
+  it("lazy-loads capped personality, memories, and relationships for the inspector", async () => {
     const store = new MemoryStore();
     const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
     for (let index = 0; index < 60; index += 1) {
@@ -780,8 +996,10 @@ describe("hosted product surfaces", () => {
       });
     }
     const handler = makeHandler(store, new Map(), { now: () => 5_000 });
-    const state = await invoke(handler, "/state");
-    const character = state.json().snapshot.characters[0];
+    const inspect = await invoke(handler, `/characters/${moss.id}`);
+    expect(inspect.statusCode).toBe(200);
+    const character = inspect.json().character;
+    expect(character.personality).toBe(moss.personality);
     expect(character.memories).toHaveLength(50);
     expect(character.memories[0].id).toBe("mem-59");
     expect(

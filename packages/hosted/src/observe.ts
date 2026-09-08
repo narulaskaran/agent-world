@@ -28,8 +28,6 @@ export const worldSnapshotEtag = (
     characters: snapshot.characters.map((character) => ({
       id: character.id,
       name: character.name,
-      personality: character.personality,
-      model: character.model,
       state: character.state,
       targetX: character.targetX,
       targetY: character.targetY,
@@ -37,13 +35,8 @@ export const worldSnapshotEtag = (
       speech: character.speech,
       avatarColor: character.avatarColor,
       toolActive: character.toolActive,
-      reputation: character.reputation,
       locationId: character.locationId,
       updatedAt: character.updatedAt,
-      memories: character.memories.map((memory) => memory.id),
-      relationships: character.relationships.map(
-        (row) => `${row.characterId}:${row.affinity}`,
-      ),
     })),
     events: snapshot.events.map((event) => event.id),
     artifacts: snapshot.artifacts.map((artifact) => artifact.id),
