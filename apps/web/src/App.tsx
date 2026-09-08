@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import type { FormEvent } from "react";
 import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
 import {
@@ -1327,6 +1328,7 @@ export function App() {
       {modal === "admin" && (
         <AdminModal snapshot={snapshot} onClose={() => setModal(null)} />
       )}
+      <Analytics />
     </div>
   );
 }
