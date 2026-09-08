@@ -1,6 +1,6 @@
 # Neon transfer / quota waste
 
-**Status:** leftover payload/tick/retention work is on `main` (after `48531d3`). OpenRouter (#3) stays parked.
+**Status:** leftover payload/tick/retention work is on `main` (`5abe3e8`, after `48531d3`). OpenRouter (#3) stays parked.
 **Scope:** `narulaskaran/agent-world` hosted production (Vercel Hobby + Neon Free/marketplace).
 **World is parked.** Production still returns Neon **HTTP 402 data-transfer quota**, surfaced as `DATABASE_UNAVAILABLE` 503, until quota resets. These leftover cuts stop the observe path from making it worse after restore.
 **Evidence mix:** code on `main` (verified), Vercel production runtime logs (2026-09-08), prior QA notes. `pg_stat_statements` was not available: Neon MCP is unauthenticated here and the compute is quota-blocked. Byte estimates are order-of-magnitude from query shapes, not a billing export.
@@ -8,7 +8,7 @@
 ## Changelog
 
 - **Observe-path cut (`48531d3`):** read-only spectator `GET /api/state` (no presence write, due-job checks, or autonomy drain); ETag / If-None-Match; hidden-tab pause + 5xx backoff; memory/relationship caps; wallet DDL off `/state`.
-- **Leftover cut:**
+- **Leftover cut (`5abe3e8`):**
   1. Slim `/api/state` board payload (id/pose/speech + map pick/render fields). Personality, memories, and relationships lazy-load from `GET /api/characters/:id`. ETag still applies to the slim snapshot.
   2. No `ensureSchema` on GET `/api/state`. World DDL stays on mutations and `/api/jobs/run` (once per process via `schemaReady`).
   3. Retention: delete completed `character_queue` rows; cap/prune artifacts (keep 80) and conversations (same keep/max-age as events). `listMemories` is by `character_id` only (export no longer dumps the table).
