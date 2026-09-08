@@ -23,7 +23,12 @@ import {
   runAutonomy,
   type AutonomyOptions,
 } from "./jobs.js";
+import { ifNoneMatchHits, worldSnapshotEtag } from "./observe.js";
 import type { CharacterRow, HostedStore } from "./store.js";
+import {
+  MEMORY_KEEP_PER_CHARACTER,
+  RELATIONSHIP_KEEP_PER_CHARACTER,
+} from "./store.js";
 import {
   assertIdempotencyKey,
   PaymentError,
@@ -81,8 +86,16 @@ const header = (request: Request, name: string): string | undefined => {
   return Array.isArray(value) ? value.join(",") : value;
 };
 
-const send = (response: Response, status: number, body?: unknown): void => {
+const send = (
+  response: Response,
+  status: number,
+  body?: unknown,
+  headers?: Record<string, string>,
+): void => {
   response.statusCode = status;
+  if (headers)
+    for (const [name, value] of Object.entries(headers))
+      response.setHeader(name, value);
   if (body === undefined) return response.end();
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(body));
@@ -227,8 +240,10 @@ const worldSnapshot = async (
   ] = await Promise.all([
     store.getWorldState(),
     store.listCharacters(),
-    store.listMemories(),
-    store.listRelationships(),
+    store.listMemories({ perCharacterLimit: MEMORY_KEEP_PER_CHARACTER }),
+    store.listRelationships({
+      perCharacterLimit: RELATIONSHIP_KEEP_PER_CHARACTER,
+    }),
     store.listEvents({
       limit: 100,
       viewerCharacterIds,
@@ -499,8 +514,9 @@ export function createHandler(deps: HostedDeps) {
     response.setHeader("access-control-allow-credentials", "true");
     response.setHeader(
       "access-control-allow-headers",
-      "authorization, content-type, cookie",
+      "authorization, content-type, cookie, if-none-match",
     );
+    response.setHeader("access-control-expose-headers", "etag");
     response.setHeader(
       "access-control-allow-methods",
       "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
@@ -566,39 +582,57 @@ export function createHandler(deps: HostedDeps) {
           });
       }
 
-      const viewerId = await deps.sessionUserId(request).catch(() => null);
+      const wantsWalletSchema =
+        path.startsWith("/wallet") ||
+        path.startsWith("/admin/wallet") ||
+        path === "/admin/spend-pause";
+      if (wantsWalletSchema) {
+        try {
+          await deps.store.ensureWalletSchema();
+        } catch (error) {
+          log({
+            level: "error",
+            msg: `wallet schema ensure failed: ${errorMessage(error).slice(0, 180)}`,
+            kind: "WALLET_SCHEMA_UNAVAILABLE",
+            requestId,
+            path,
+            method,
+          });
+          if (isDatabaseUnavailable(error))
+            return send(response, 503, {
+              error: "DATABASE_UNAVAILABLE",
+              requestId,
+            });
+        }
+      }
+
+      const hasSessionHint = Boolean(
+        header(request, "cookie") || header(request, "authorization"),
+      );
+      const viewerId = hasSessionHint
+        ? await deps.sessionUserId(request).catch(() => null)
+        : null;
       const ownedIds = viewerId ? await deps.store.listOwnedIds(viewerId) : [];
       const admin = Boolean(viewerId && isAdmin(deps.env, viewerId));
 
       if (path === "/state" && method === "GET") {
         const now = deps.now();
-        await deps.store.touchPresence(
-          `${viewerId ?? "anon"}:${clientKey(request)}`,
-          now,
-        );
-        const dueCharacters = await deps.store.dueCharacterIds(now);
-        const dueJobs = await deps.store.countDueJobs(now);
-        if (dueCharacters.length > 0 || dueJobs > 0) {
-          await runAutonomy(
-            deps.store,
-            autonomyOptions(deps, Math.min(8, deps.env.drainLimit)),
-          ).catch((error) => {
-            log({
-              level: "error",
-              msg: "opportunistic drain failed",
-              kind: "AUTONOMY_DRAIN_FAILED",
-              requestId,
-            });
-          });
-        }
         const snapshot = await worldSnapshot(
           deps.store,
-          deps.now(),
+          now,
           ownedIds,
           admin,
-          await deps.store.countPresence(deps.now() - 20_000),
+          0,
           deps.env.inviteOnly,
         );
+        const etag = worldSnapshotEtag(
+          snapshot,
+          viewerId ? `${viewerId}:${admin ? "admin" : "user"}` : "anon",
+        );
+        response.setHeader("etag", etag);
+        response.setHeader("cache-control", "private, no-cache");
+        if (ifNoneMatchHits(header(request, "if-none-match"), etag))
+          return send(response, 304);
         return send(response, 200, {
           snapshot,
           viewer: viewerId
@@ -961,9 +995,10 @@ export function createHandler(deps: HostedDeps) {
         if (action === "export" && method === "GET") {
           if (!owned)
             return send(response, 404, { error: "Character not found" });
-          const memories = (await deps.store.listMemories()).filter(
-            (memory) => memory.characterId === owned.id,
-          );
+          const memories = await deps.store.listMemories({
+            characterId: owned.id,
+            perCharacterLimit: MEMORY_KEEP_PER_CHARACTER,
+          });
           return send(response, 200, {
             version: 1,
             name: owned.name,

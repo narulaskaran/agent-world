@@ -19,10 +19,30 @@ export interface Viewer {
   characterIds?: string[];
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export interface StateResponse {
   snapshot: WorldSnapshot;
   /** Optional while rolling out the authenticated API to older deployments. */
   viewer?: Viewer | null;
+  etag?: string;
+  notModified?: boolean;
+}
+
+export interface StateFetchResult {
+  snapshot?: WorldSnapshot;
+  viewer?: Viewer | null;
+  etag?: string;
+  notModified?: boolean;
 }
 
 export interface SessionResponse {
@@ -44,7 +64,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body = (await response.json().catch(() => ({}))) as {
       error?: string;
     };
-    throw new Error(body.error ?? `Request failed (${response.status})`);
+    throw new ApiError(
+      body.error ?? `Request failed (${response.status})`,
+      response.status,
+      body.error,
+    );
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -58,13 +82,26 @@ export interface AdminReport {
 }
 
 export const api = {
-  state: async (): Promise<StateResponse> => {
-    const payload = (await request<
-      WorldSnapshot & {
-        viewer?: Viewer | null;
-        snapshot?: WorldSnapshot;
-      }
-    >("/api/state")) as WorldSnapshot & {
+  state: async (etag?: string): Promise<StateFetchResult> => {
+    const headers = new Headers();
+    if (etag) headers.set("if-none-match", etag);
+    const response = await fetch(`${API_URL}/api/state`, {
+      headers,
+      credentials: "include",
+    });
+    const nextEtag = response.headers.get("etag") ?? etag;
+    if (response.status === 304) return { notModified: true, etag: nextEtag };
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      throw new ApiError(
+        body.error ?? `Request failed (${response.status})`,
+        response.status,
+        body.error,
+      );
+    }
+    const payload = (await response.json()) as WorldSnapshot & {
       viewer?: Viewer | null;
       snapshot?: WorldSnapshot;
     };
@@ -77,6 +114,7 @@ export const api = {
           artifacts: payload.snapshot.artifacts ?? [],
         },
         viewer: payload.viewer,
+        etag: nextEtag,
       };
     }
     const { viewer, ...snapshot } = payload;
@@ -87,6 +125,7 @@ export const api = {
         artifacts: world.artifacts ?? [],
       },
       viewer,
+      etag: nextEtag,
     };
   },
   session: () => request<SessionResponse>("/api/auth/session"),

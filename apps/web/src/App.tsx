@@ -19,6 +19,11 @@ import type { Viewer } from "./api";
 import { api, type AdminReport } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
 import {
+  FOREGROUND_POLL_MS,
+  isStateUnavailable,
+  nextPollDelayMs,
+} from "./poll";
+import {
   PUBLIC_RECORD_LIMIT,
   eventDetailsLabel,
   guestEventDetail,
@@ -52,41 +57,72 @@ function useWorld() {
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [connected, setConnected] = useState(false);
   const sessionChecked = useRef(false);
+  const etagRef = useRef<string | undefined>(undefined);
+  const backoffRef = useRef(FOREGROUND_POLL_MS);
 
   const refresh = useCallback(async () => {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    )
+      return;
     try {
-      const state = await api.state();
-      setSnapshot(state.snapshot);
-      if (state.viewer !== undefined) {
-        setViewer(state.viewer);
-        sessionChecked.current = true;
-      } else if (!sessionChecked.current) {
-        // Older API deployments return a flat snapshot. Ask the compatibility
-        // session endpoint once so ownership still comes from the server.
-        try {
-          const session = await api.session();
-          setViewer(session.viewer);
-        } catch {
-          setViewer(null);
-        } finally {
+      const state = await api.state(etagRef.current);
+      if (state.etag) etagRef.current = state.etag;
+      if (!state.notModified && state.snapshot) {
+        setSnapshot(state.snapshot);
+        if (state.viewer !== undefined) {
+          setViewer(state.viewer);
           sessionChecked.current = true;
+        } else if (!sessionChecked.current) {
+          // Older API deployments return a flat snapshot. Ask the compatibility
+          // session endpoint once so ownership still comes from the server.
+          try {
+            const session = await api.session();
+            setViewer(session.viewer);
+          } catch {
+            setViewer(null);
+          } finally {
+            sessionChecked.current = true;
+          }
         }
       }
       setConnected(true);
-    } catch {
+      backoffRef.current = FOREGROUND_POLL_MS;
+    } catch (error) {
       setConnected(false);
+      backoffRef.current =
+        nextPollDelayMs({
+          visible: true,
+          unavailable: isStateUnavailable(error),
+          previousDelayMs: backoffRef.current,
+        }) ?? FOREGROUND_POLL_MS;
     }
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const poll = window.setInterval(() => void refresh(), 4000);
+    let cancelled = false;
+    let timer = 0;
+
+    const loop = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== "hidden") await refresh();
+      if (cancelled) return;
+      const delay =
+        document.visibilityState === "hidden" ? null : backoffRef.current;
+      if (delay == null) return;
+      timer = window.setTimeout(() => void loop(), delay);
+    };
+
+    void loop();
     const onVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      window.clearTimeout(timer);
+      if (document.visibilityState === "visible") void loop();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      clearInterval(poll);
+      cancelled = true;
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [refresh]);

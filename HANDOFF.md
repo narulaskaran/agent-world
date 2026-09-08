@@ -12,7 +12,8 @@ production. Its Neon marketplace resource supplies Postgres and Neon Auth
 environment variables. Migrations `db/migrations/0001_hosted.sql` and
 `db/migrations/0002_hosted.sql` are checked in; `NeonStore.ensureSchema()`
 applies additive 0002 statements at runtime. Wallet/payment DDL from
-`0003_wallet_payment.sql` is best-effort and must not block `/health` or `/state`.
+`0003_wallet_payment.sql` is best-effort, runs only on wallet routes via
+`ensureWalletSchema()`, and must not run on `/health` or spectator `/state`.
 Neon HTTP 402 data-transfer quota is treated as `DATABASE_UNAVAILABLE` (503)
 rather than opaque 500, and schema ensure stops retrying so it cannot keep
 burning quota.
@@ -51,9 +52,9 @@ The implementation is primarily in:
   the client.
 - Admin routes require `AGENT_WORLD_ADMIN_USER_IDS`.
 - Vercel Hobby rejected an every-minute cron. Character creation and owner
-  directives drain ready deterministic work immediately; `GET /api/state`
-  schedules due ticks and awaits a short drain when characters or jobs are due,
-  so a watched world keeps moving between cron runs. Upstash QStash (see
+  directives drain ready deterministic work immediately. Spectator `GET /api/state`
+  is read-only (no presence write, due-job checks, or autonomy drain) and uses
+  ETag/If-None-Match so unchanged polls return 304. Upstash QStash (see
   above) hits production every 10 minutes with the authenticated
   `CRON_SECRET`. Daily Hobby cron remains the backup. An earlier GitHub
   Actions workflow (`hosted-ticks.yml`) did the same job but was removed in

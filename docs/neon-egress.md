@@ -1,6 +1,6 @@
 # Neon transfer / quota waste
 
-**Status:** findings only. No poll, schema, or handler changes in this document’s PR.
+**Status:** findings on `main` (`bc506cc`, PR #32). The observe-path cut (read-only spectator `/state`, ETag, client backoff, memory/relationship caps, wallet DDL off the hot path) is implemented in a follow-up PR, not this document.
 **Scope:** `narulaskaran/agent-world` hosted production (Vercel Hobby + Neon Free/marketplace).
 **World is parked.** Production still returns Neon **HTTP 402 data-transfer quota**, surfaced as `DATABASE_UNAVAILABLE` 503.
 **Evidence mix:** code on `main` (verified), Vercel production runtime logs (2026-09-08), prior QA notes. `pg_stat_statements` was not available: Neon MCP is unauthenticated here and the compute is quota-blocked. Byte estimates are order-of-magnitude from query shapes, not a billing export.

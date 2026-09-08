@@ -10,7 +10,8 @@
 - `api/index.ts`: Vercel Function entry that re-exports `createProductionHandler()`.
 - `db/migrations`: checked-in Postgres SQL. `0002_hosted.sql` is also applied at
   runtime by `NeonStore.ensureSchema()`. Wallet/payment DDL from
-  `0003_wallet_payment.sql` is best-effort and must not block `/health` or `/state`.
+  `0003_wallet_payment.sql` is best-effort via `ensureWalletSchema()` on wallet
+  routes only and must not run on spectator `/state`.
 - `.github/workflows/check.yml`: `pnpm check` plus optional live Neon claims.
 
 ## Hosted behavior
@@ -20,10 +21,12 @@
 - Conversation _lines_ are private to participants; the fact that people met stays public.
 - Deterministic jobs live in `character_queue`. Claims use `FOR UPDATE SKIP LOCKED`.
 - Stale `processing` rows are returned to `pending` when their lease (`not_before`) expires.
-- Hobby cron is daily (`/api/jobs/run`). Mutations drain immediately. `GET /api/state`
-  schedules due ticks and awaits a short drain when due characters or jobs exist.
-  Upstash QStash repeats an authenticated `GET /api/jobs/run` unattended every
-  10 minutes (`Authorization: Bearer $CRON_SECRET`); see `HANDOFF.md`.
+- Hobby cron is daily (`/api/jobs/run`). Mutations drain immediately. Spectator
+  `GET /api/state` is read-only: no presence write, due-job checks, or autonomy
+  drain. Clients poll with ETag/If-None-Match (~4s foreground, pause when
+  hidden, exponential backoff on 5xx). Upstash QStash repeats an authenticated
+  `GET /api/jobs/run` unattended every 10 minutes (`Authorization: Bearer $CRON_SECRET`);
+  see `HANDOFF.md`.
 - `AGENT_WORLD_INVITE_ONLY=true` plus `AGENT_WORLD_INVITE_USER_IDS` can close
   character creation without disabling public observation.
 - Do not enable OpenRouter, Privy, or Stripe in this codebase until those milestones.

@@ -17,9 +17,10 @@ and MPP funding/spending remain later integrations.
 - The repository now includes a root [vercel.json](./vercel.json) for the pnpm
   workspace: it builds `@agent-world/web`, serves `apps/web/dist`, and schedules
   `/api/jobs/run` daily. Vercel Hobby rejected the original every-minute cron;
-  ready work is drained after character creation and owner directives, and
-  `GET /api/state` schedules due ticks then awaits a short drain so a watched
-  world keeps moving between cron runs. `.github/workflows/hosted-ticks.yml`
+  ready work is drained after character creation and owner directives.
+  Spectator `GET /api/state` is read-only and uses ETag/If-None-Match so a
+  watched world interpolates between QStash/cron ticks without draining jobs.
+  `.github/workflows/hosted-ticks.yml`
   repeats unattended ticks every 10 minutes without a Vercel Pro plan.
 - Vercel Cron invokes that path with an HTTP GET and authenticates it with a
   `CRON_SECRET` Bearer header. The hosted handler rejects missing or mismatched

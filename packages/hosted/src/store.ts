@@ -143,6 +143,14 @@ export interface WorldStateRow {
   updatedAt: number;
 }
 
+export const MEMORY_KEEP_PER_CHARACTER = 50;
+export const RELATIONSHIP_KEEP_PER_CHARACTER = 50;
+
+export type ListBoundOptions = {
+  characterId?: string;
+  perCharacterLimit?: number;
+};
+
 export const CLAIM_JOB_SQL = `WITH candidate AS (
   SELECT id FROM character_queue
   WHERE status = 'pending' AND not_before <= $1 AND expires_at > $1
@@ -157,6 +165,7 @@ export const CLAIM_JOB_SQL = `WITH candidate AS (
 
 export interface HostedStore {
   ensureSchema(): Promise<void>;
+  ensureWalletSchema(): Promise<void>;
   transaction<T>(fn: () => Promise<T>): Promise<T>;
 
   getWorldState(): Promise<WorldStateRow>;
@@ -173,10 +182,10 @@ export interface HostedStore {
   updateCharacter(id: string, patch: Partial<CharacterRow>): Promise<void>;
   deleteCharacter(id: string): Promise<void>;
 
-  listMemories(): Promise<MemoryRow[]>;
+  listMemories(options?: ListBoundOptions): Promise<MemoryRow[]>;
   addMemory(row: MemoryRow): Promise<void>;
   replaceMemories(characterId: string, rows: MemoryRow[]): Promise<void>;
-  listRelationships(): Promise<RelationshipRow[]>;
+  listRelationships(options?: ListBoundOptions): Promise<RelationshipRow[]>;
   upsertRelationship(row: RelationshipRow): Promise<void>;
 
   addEvent(row: EventRow): Promise<void>;

@@ -84,6 +84,7 @@ const invoke = async (
     body?: unknown;
     cookie?: string;
     authorization?: string;
+    ifNoneMatch?: string;
   } = {},
 ) => {
   const response = new MockResponse();
@@ -93,6 +94,7 @@ const invoke = async (
   };
   if (init.cookie) headers.cookie = init.cookie;
   if (init.authorization) headers.authorization = init.authorization;
+  if (init.ifNoneMatch) headers["if-none-match"] = init.ifNoneMatch;
   if (init.body !== undefined) headers["content-type"] = "application/json";
   await handler(
     {
@@ -691,18 +693,111 @@ describe("hosted product surfaces", () => {
     expect(wallet.json().error).not.toBe("INTERNAL_ERROR");
   });
 
-  it("lets spectators poll state to schedule and drain due ticks", async () => {
-    const store = new MemoryStore();
+  it("keeps spectator state read-only without draining jobs or writing presence", async () => {
+    class SpyStore extends MemoryStore {
+      presenceWrites = 0;
+      dueReads = 0;
+      walletEnsures = 0;
+      override async touchPresence(): Promise<void> {
+        this.presenceWrites += 1;
+      }
+      override async dueCharacterIds(now: number) {
+        this.dueReads += 1;
+        return super.dueCharacterIds(now);
+      }
+      override async countDueJobs(now: number) {
+        this.dueReads += 1;
+        return super.countDueJobs(now);
+      }
+      override async ensureWalletSchema(): Promise<void> {
+        this.walletEnsures += 1;
+      }
+    }
+    const store = new SpyStore();
     const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
     await store.updateCharacter(moss.id, { nextDecisionAt: 1_000 });
     const handler = makeHandler(store, new Map(), { now: () => 5_000 });
     const state = await invoke(handler, "/state");
     expect(state.statusCode).toBe(200);
-    const body = state.json();
-    expect(body.snapshot.connectedViewers).toBe(1);
-    expect(body.snapshot.events.length).toBeGreaterThan(0);
+    expect(state.json().snapshot.connectedViewers).toBe(0);
+    expect(store.presenceWrites).toBe(0);
+    expect(store.dueReads).toBe(0);
+    expect(store.walletEnsures).toBe(0);
     const row = await store.getCharacter(moss.id);
-    expect(row?.updatedAt).toBe(5_000);
+    expect(row?.updatedAt).toBe(1_000);
+    expect(row?.nextDecisionAt).toBe(1_000);
+    const drained = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(drained.statusCode).toBe(200);
+    expect(drained.json().processed).toBeGreaterThan(0);
+    const after = await store.getCharacter(moss.id);
+    expect(after?.updatedAt).toBe(5_000);
+  });
+
+  it("returns 304 when spectator state is unchanged", async () => {
+    const store = new MemoryStore();
+    await seedCharacter(store, "user-a", "Moss", 1_000);
+    const handler = makeHandler(store, new Map(), { now: () => 5_000 });
+    const first = await invoke(handler, "/state");
+    expect(first.statusCode).toBe(200);
+    const etag = String(first.headers.etag);
+    expect(etag.length).toBeGreaterThan(4);
+    const again = await invoke(handler, "/state", { ifNoneMatch: etag });
+    expect(again.statusCode).toBe(304);
+    expect(again.body).toBe("");
+    await store.updateCharacter((await store.listCharacters())[0]!.id, {
+      intent: "Waving from the plaza",
+      updatedAt: 6_000,
+    });
+    const changed = await invoke(handler, "/state", { ifNoneMatch: etag });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json().snapshot.characters[0].intent).toBe(
+      "Waving from the plaza",
+    );
+  });
+
+  it("caps public snapshot memories and relationships per character", async () => {
+    const store = new MemoryStore();
+    const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
+    for (let index = 0; index < 60; index += 1) {
+      await store.addMemory({
+        id: `mem-${index}`,
+        characterId: moss.id,
+        kind: "fact",
+        bullet: `Noticed landmark ${index}`,
+        subject: "plaza",
+        confidence: 0.7,
+        active: true,
+        createdAt: 1_000 + index,
+      });
+      await store.upsertRelationship({
+        characterId: moss.id,
+        otherCharacterId: `other-${index}`,
+        impression: `Met neighbor ${index}`,
+        affinity: index,
+        updatedAt: 1_000 + index,
+      });
+    }
+    const handler = makeHandler(store, new Map(), { now: () => 5_000 });
+    const state = await invoke(handler, "/state");
+    const character = state.json().snapshot.characters[0];
+    expect(character.memories).toHaveLength(50);
+    expect(character.memories[0].id).toBe("mem-59");
+    expect(
+      character.memories.some((row: { id: string }) => row.id === "mem-0"),
+    ).toBe(false);
+    expect(character.relationships).toHaveLength(50);
+    expect(
+      character.relationships.some(
+        (row: { characterId: string }) => row.characterId === "other-59",
+      ),
+    ).toBe(true);
+    expect(
+      character.relationships.some(
+        (row: { characterId: string }) => row.characterId === "other-0",
+      ),
+    ).toBe(false);
   });
 
   it("walks along a persisted movement segment instead of teleporting", async () => {

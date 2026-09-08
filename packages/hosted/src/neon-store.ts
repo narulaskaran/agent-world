@@ -22,12 +22,14 @@ import type {
   CostRow,
   EventRow,
   HostedStore,
+  ListBoundOptions,
   MemoryRow,
   QueueJob,
   RelationshipRow,
   ReportRow,
   WorldStateRow,
 } from "./store.js";
+import { MEMORY_KEEP_PER_CHARACTER } from "./store.js";
 
 export type NeonSql = ((
   strings: TemplateStringsArray,
@@ -220,6 +222,8 @@ const WORLD_SCHEMA_STATEMENTS = [
     viewer_key text PRIMARY KEY,
     seen_at bigint NOT NULL
   )`,
+  "CREATE INDEX IF NOT EXISTS memories_character_created_idx ON memories (character_id, created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS relationships_character_updated_idx ON relationships (character_id, updated_at DESC)",
 ];
 
 const WALLET_SCHEMA_STATEMENTS = [
@@ -348,7 +352,8 @@ export class NeonStore implements HostedStore {
   }
 
   private rememberDbError(error: unknown): void {
-    if (isDatabaseUnavailable(error)) this.dbBlockedUntil = Date.now() + 60_000;
+    if (isDatabaseUnavailable(error))
+      this.dbBlockedUntil = Date.now() + 3_600_000;
   }
 
   private throwIfDbBlocked(): void {
@@ -366,15 +371,15 @@ export class NeonStore implements HostedStore {
           await this.sql().query(statement);
         this.schemaReady = true;
       }
-      await this.ensureWalletSchema();
     } catch (error) {
       this.rememberDbError(error);
       throw error;
     }
   }
 
-  private async ensureWalletSchema(): Promise<void> {
+  async ensureWalletSchema(): Promise<void> {
     if (this.walletSchemaReady) return;
+    this.throwIfDbBlocked();
     let failed: string | undefined;
     for (const statement of WALLET_SCHEMA_STATEMENTS) {
       try {
@@ -545,9 +550,19 @@ export class NeonStore implements HostedStore {
     await sql`DELETE FROM characters WHERE id = ${id}`;
   }
 
-  async listMemories(): Promise<MemoryRow[]> {
-    const rows =
-      await this.sql()`SELECT * FROM memories WHERE active = true ORDER BY created_at DESC`;
+  async listMemories(options?: ListBoundOptions): Promise<MemoryRow[]> {
+    const characterId = options?.characterId;
+    const limit = options?.perCharacterLimit;
+    const rows = characterId
+      ? limit == null
+        ? await this.sql()`SELECT * FROM memories WHERE active = true AND character_id = ${characterId} ORDER BY created_at DESC`
+        : await this.sql()`SELECT * FROM memories WHERE active = true AND character_id = ${characterId} ORDER BY created_at DESC LIMIT ${limit}`
+      : limit == null
+        ? await this.sql()`SELECT * FROM memories WHERE active = true ORDER BY created_at DESC`
+        : await this.sql()`SELECT id, character_id, kind, bullet, subject, confidence, active, created_at FROM (
+            SELECT memories.*, row_number() OVER (PARTITION BY character_id ORDER BY created_at DESC) AS rn
+            FROM memories WHERE active = true
+          ) ranked WHERE rn <= ${limit}`;
     return rows.map((row) => ({
       id: row.id,
       characterId: row.character_id,
@@ -563,15 +578,38 @@ export class NeonStore implements HostedStore {
   async addMemory(row: MemoryRow): Promise<void> {
     await this.sql()`INSERT INTO memories (id, character_id, kind, bullet, subject, confidence, active, created_at)
       VALUES (${row.id}, ${row.characterId}, ${row.kind}, ${row.bullet}, ${row.subject}, ${row.confidence}, ${row.active}, ${row.createdAt})`;
+    await this.sql()`UPDATE memories SET active = false
+      WHERE character_id = ${row.characterId} AND active = true AND id NOT IN (
+        SELECT id FROM (
+          SELECT id FROM memories
+          WHERE character_id = ${row.characterId} AND active = true
+          ORDER BY created_at DESC
+          LIMIT ${MEMORY_KEEP_PER_CHARACTER}
+        ) keepers
+      )`;
   }
 
   async replaceMemories(characterId: string, rows: MemoryRow[]): Promise<void> {
     await this.sql()`DELETE FROM memories WHERE character_id = ${characterId}`;
-    for (const row of rows) await this.addMemory(row);
+    for (const row of rows.slice(0, MEMORY_KEEP_PER_CHARACTER))
+      await this.addMemory(row);
   }
 
-  async listRelationships(): Promise<RelationshipRow[]> {
-    const rows = await this.sql()`SELECT * FROM relationships`;
+  async listRelationships(
+    options?: ListBoundOptions,
+  ): Promise<RelationshipRow[]> {
+    const characterId = options?.characterId;
+    const limit = options?.perCharacterLimit;
+    const rows = characterId
+      ? limit == null
+        ? await this.sql()`SELECT * FROM relationships WHERE character_id = ${characterId}`
+        : await this.sql()`SELECT * FROM relationships WHERE character_id = ${characterId} ORDER BY updated_at DESC, affinity DESC LIMIT ${limit}`
+      : limit == null
+        ? await this.sql()`SELECT * FROM relationships`
+        : await this.sql()`SELECT character_id, other_character_id, impression, affinity, updated_at FROM (
+            SELECT relationships.*, row_number() OVER (PARTITION BY character_id ORDER BY updated_at DESC, affinity DESC) AS rn
+            FROM relationships
+          ) ranked WHERE rn <= ${limit}`;
     return rows.map((row) => ({
       characterId: row.character_id,
       otherCharacterId: row.other_character_id,

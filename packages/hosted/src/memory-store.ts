@@ -19,12 +19,14 @@ import type {
   CostRow,
   EventRow,
   HostedStore,
+  ListBoundOptions,
   MemoryRow,
   QueueJob,
   RelationshipRow,
   ReportRow,
   WorldStateRow,
 } from "./store.js";
+import { MEMORY_KEEP_PER_CHARACTER } from "./store.js";
 
 class Mutex {
   private chain = Promise.resolve();
@@ -40,6 +42,21 @@ class Mutex {
 }
 
 const clone = <T>(value: T): T => structuredClone(value);
+
+const capPerCharacter = <T extends { characterId: string }>(
+  rows: T[],
+  limit: number | undefined,
+  compare: (left: T, right: T) => number,
+): T[] => {
+  if (limit == null) return rows;
+  const kept = new Map<string, number>();
+  return [...rows].sort(compare).filter((row) => {
+    const count = kept.get(row.characterId) ?? 0;
+    if (count >= limit) return false;
+    kept.set(row.characterId, count + 1);
+    return true;
+  });
+};
 
 export class MemoryStore implements HostedStore {
   readonly supportsFinancialTransactions = true;
@@ -90,6 +107,8 @@ export class MemoryStore implements HostedStore {
   presence = new Map<string, number>();
 
   async ensureSchema(): Promise<void> {}
+
+  async ensureWalletSchema(): Promise<void> {}
 
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
     if (this.depth > 0) return fn();
@@ -239,13 +258,28 @@ export class MemoryStore implements HostedStore {
     });
   }
 
-  async listMemories(): Promise<MemoryRow[]> {
-    return this.memories.filter((row) => row.active).map(clone);
+  async listMemories(options?: ListBoundOptions): Promise<MemoryRow[]> {
+    const rows = this.memories.filter(
+      (row) =>
+        row.active &&
+        (!options?.characterId || row.characterId === options.characterId),
+    );
+    return capPerCharacter(
+      rows,
+      options?.perCharacterLimit,
+      (left, right) => right.createdAt - left.createdAt,
+    ).map(clone);
   }
 
   async addMemory(row: MemoryRow): Promise<void> {
     await this.locked(() => {
       this.memories.unshift(clone(row));
+      let kept = 0;
+      for (const memory of this.memories) {
+        if (memory.characterId !== row.characterId || !memory.active) continue;
+        kept += 1;
+        if (kept > MEMORY_KEEP_PER_CHARACTER) memory.active = false;
+      }
     });
   }
 
@@ -254,12 +288,24 @@ export class MemoryStore implements HostedStore {
       this.memories = this.memories.filter(
         (row) => row.characterId !== characterId,
       );
-      this.memories.unshift(...rows.map(clone));
+      this.memories.unshift(
+        ...rows.slice(0, MEMORY_KEEP_PER_CHARACTER).map(clone),
+      );
     });
   }
 
-  async listRelationships(): Promise<RelationshipRow[]> {
-    return [...this.relationships.values()].map(clone);
+  async listRelationships(
+    options?: ListBoundOptions,
+  ): Promise<RelationshipRow[]> {
+    const rows = [...this.relationships.values()].filter(
+      (row) => !options?.characterId || row.characterId === options.characterId,
+    );
+    return capPerCharacter(
+      rows,
+      options?.perCharacterLimit,
+      (left, right) =>
+        right.updatedAt - left.updatedAt || right.affinity - left.affinity,
+    ).map(clone);
   }
 
   async upsertRelationship(row: RelationshipRow): Promise<void> {

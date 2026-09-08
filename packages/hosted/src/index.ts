@@ -20,7 +20,11 @@ export { createHandler, parseEnv, isAdmin, hasCronAccess } from "./handler.js";
 export { MemoryStore } from "./memory-store.js";
 export { NeonStore } from "./neon-store.js";
 export { runAutonomy, executeJob, enqueueTick, positionAt } from "./jobs.js";
-export { CLAIM_JOB_SQL } from "./store.js";
+export {
+  CLAIM_JOB_SQL,
+  MEMORY_KEEP_PER_CHARACTER,
+  RELATIONSHIP_KEEP_PER_CHARACTER,
+} from "./store.js";
 export {
   DEFAULT_DAILY_LIMIT_MICROS,
   MemoryWalletStore,

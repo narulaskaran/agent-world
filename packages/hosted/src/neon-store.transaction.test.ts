@@ -35,7 +35,7 @@ describe("NeonStore.transaction", () => {
 });
 
 describe("NeonStore.ensureSchema", () => {
-  it("applies world schema even when wallet DDL fails", async () => {
+  it("applies world schema without wallet DDL and skips repeats", async () => {
     const statements: string[] = [];
     const sql = fakeSql();
     sql.query = async (text: string) => {
@@ -58,6 +58,9 @@ describe("NeonStore.ensureSchema", () => {
         statement.includes("characters_owner_idx"),
       ),
     ).toBe(true);
+    expect(
+      statements.some((statement) => /user_wallets/i.test(statement)),
+    ).toBe(false);
     await expect(store.ensureSchema()).resolves.toBeUndefined();
     const worldPasses = statements.filter((statement) =>
       statement.includes("viewer_presence"),
@@ -65,11 +68,13 @@ describe("NeonStore.ensureSchema", () => {
     expect(worldPasses).toHaveLength(1);
   });
 
-  it("stops applying wallet DDL after a Neon quota error", async () => {
+  it("applies wallet DDL only from ensureWalletSchema and stops after a Neon quota error", async () => {
     let queries = 0;
+    const statements: string[] = [];
     const sql = fakeSql();
     sql.query = async (text: string) => {
       queries += 1;
+      statements.push(text);
       if (
         /user_wallets|payment_attempts|funding_attempts|spend_pauses|wallet_provisioning|payment_audit|payment_quotas|tool_manifests|user_daily_spend/i.test(
           text,
@@ -82,8 +87,16 @@ describe("NeonStore.ensureSchema", () => {
     };
     const store = new NeonStore(sql);
     await store.ensureSchema();
+    expect(
+      statements.some((statement) => /user_wallets/i.test(statement)),
+    ).toBe(false);
     const afterWorld = queries;
+    await store.ensureWalletSchema();
+    expect(queries).toBeGreaterThan(afterWorld);
+    const afterWallet = queries;
+    await store.ensureWalletSchema();
+    expect(queries).toBe(afterWallet);
     await expect(store.ensureSchema()).rejects.toThrow(/data transfer quota/);
-    expect(queries).toBe(afterWorld);
+    expect(queries).toBe(afterWallet);
   });
 });
