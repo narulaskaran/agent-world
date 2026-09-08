@@ -55,10 +55,24 @@ export type {
   OnrampSessionRequest,
 } from "./wallet-payment.js";
 
+const resolveDatabaseUrl = (
+  env: Record<string, string | undefined> = process.env,
+): string => {
+  const candidates = [
+    env.DATABASE_URL,
+    env.POSTGRES_URL,
+    env.DATABASE_URL_UNPOOLED,
+    env.POSTGRES_URL_NON_POOLING,
+    env.POSTGRES_PRISMA_URL,
+  ];
+  for (const value of candidates) {
+    if (value && /^(postgres(ql)?):/i.test(value)) return value;
+  }
+  return candidates.find((value) => Boolean(value?.trim())) ?? "";
+};
+
 export function createProductionHandler() {
-  const sql = neon(
-    process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? "",
-  ) as unknown as NeonSql;
+  const sql = neon(resolveDatabaseUrl()) as unknown as NeonSql;
   const store = new NeonStore(sql);
   const env = parseEnv(process.env);
   const deps = {

@@ -606,9 +606,30 @@ describe("hosted product surfaces", () => {
     expect(state.json().snapshot.characters).toHaveLength(1);
   });
 
+  it("recovers health after ensureSchema when the first world probe fails", async () => {
+    class FlakyStore extends MemoryStore {
+      probes = 0;
+      override async getWorldState() {
+        this.probes += 1;
+        if (this.probes === 1)
+          throw new Error("relation world_state does not exist");
+        return super.getWorldState();
+      }
+    }
+    const health = await invoke(
+      makeHandler(new FlakyStore(), new Map()),
+      "/health",
+    );
+    expect(health.statusCode).toBe(200);
+    expect(health.json().dependencies.database).toBe("ok");
+  });
+
   it("returns honest 503 health when the world database probe fails", async () => {
     class DownStore extends MemoryStore {
       override async getWorldState(): Promise<never> {
+        throw new Error("db down");
+      }
+      override async ensureSchema(): Promise<void> {
         throw new Error("db down");
       }
     }

@@ -517,7 +517,18 @@ export function createHandler(deps: HostedDeps) {
         try {
           await deps.store.getWorldState();
         } catch {
-          database = "error";
+          try {
+            await deps.store.ensureSchema();
+            await deps.store.getWorldState();
+          } catch (error) {
+            database = "error";
+            log({
+              level: "error",
+              msg: `health database probe failed: ${errorMessage(error).slice(0, 180)}`,
+              kind: "DATABASE_UNAVAILABLE",
+              requestId,
+            });
+          }
         }
         const auth = deps.env.neonAuthBaseUrl ? "configured" : "missing";
         return send(
@@ -532,10 +543,10 @@ export function createHandler(deps: HostedDeps) {
 
       try {
         await deps.store.ensureSchema();
-      } catch {
+      } catch (error) {
         log({
           level: "error",
-          msg: "schema ensure failed",
+          msg: `schema ensure failed: ${errorMessage(error).slice(0, 180)}`,
           kind: "SCHEMA_UNAVAILABLE",
           requestId,
           path,
@@ -1364,7 +1375,7 @@ export function createHandler(deps: HostedDeps) {
         return send(response, error.status, { error: error.message });
       log({
         level: "error",
-        msg: "unhandled hosted handler error",
+        msg: `unhandled hosted handler error: ${errorMessage(error).slice(0, 180)}`,
         path,
         method,
         requestId,
