@@ -87,5 +87,5 @@ describeNeon("Neon SKIP LOCKED claims", () => {
     expect(won).toHaveLength(1);
     expect(won[0]?.id).toBe(jobId);
     await store.deleteCharacter(characterId);
-  });
+  }, 30_000);
 });
