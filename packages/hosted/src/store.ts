@@ -141,6 +141,7 @@ export interface WorldStateRow {
   serverSpentTodayMicros: number;
   budgetDate: string;
   updatedAt: number;
+  lastTickAt: number;
 }
 
 export const MEMORY_KEEP_PER_CHARACTER = 50;
@@ -192,6 +193,7 @@ export interface HostedStore {
   getWorldState(): Promise<WorldStateRow>;
   setSimulationPaused(paused: boolean, now: number): Promise<void>;
   setServerBudget(micros: number, now: number): Promise<void>;
+  recordWorldTick(now: number): Promise<void>;
   resetWorld(now: number): Promise<void>;
 
   listCharacters(): Promise<CharacterRow[]>;

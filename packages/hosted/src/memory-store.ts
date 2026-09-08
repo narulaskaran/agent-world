@@ -74,6 +74,7 @@ export class MemoryStore implements HostedStore {
     serverSpentTodayMicros: 0,
     budgetDate: new Date().toISOString().slice(0, 10),
     updatedAt: 0,
+    lastTickAt: 0,
   };
   characters = new Map<string, CharacterRow>();
   memories: MemoryRow[] = [];
@@ -151,6 +152,12 @@ export class MemoryStore implements HostedStore {
     });
   }
 
+  async recordWorldTick(now: number): Promise<void> {
+    await this.locked(() => {
+      this.world.lastTickAt = now;
+    });
+  }
+
   async resetWorld(now: number): Promise<void> {
     await this.locked(() => {
       this.characters.clear();
@@ -180,6 +187,7 @@ export class MemoryStore implements HostedStore {
       this.world.serverSpentTodayMicros = 0;
       this.world.budgetDate = new Date(now).toISOString().slice(0, 10);
       this.world.updatedAt = now;
+      this.world.lastTickAt = 0;
     });
   }
 

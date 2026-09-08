@@ -27,6 +27,13 @@ import {
 import { ifNoneMatchHits, worldSnapshotEtag } from "./observe.js";
 import type { BoardCharacterRow, CharacterRow, HostedStore } from "./store.js";
 import {
+  DEFAULT_TICK_INTERVAL_MIN,
+  parseTickIntervalMin,
+  shouldSkipWorldTick,
+  tickIntervalMs,
+  type TickIntervalMin,
+} from "./tick-interval.js";
+import {
   MEMORY_KEEP_PER_CHARACTER,
   RELATIONSHIP_KEEP_PER_CHARACTER,
 } from "./store.js";
@@ -67,6 +74,8 @@ export interface HostedEnv {
   maxAttempts: number;
   eventKeep: number;
   eventMaxAgeMs: number;
+  tickIntervalMin: TickIntervalMin;
+  tickIntervalInvalid: boolean;
   walletLive?: boolean;
 }
 
@@ -133,41 +142,46 @@ const clientKey = (request: Request): string =>
 
 export const parseEnv = (
   env: Record<string, string | undefined>,
-): HostedEnv => ({
-  neonAuthBaseUrl: env.NEON_AUTH_BASE_URL?.replace(/\/$/, ""),
-  cronSecret: env.CRON_SECRET,
-  adminUserIds: (env.AGENT_WORLD_ADMIN_USER_IDS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
-  webOrigins: (env.AGENT_WORLD_WEB_ORIGIN ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
-  operatorAlertWebhook: env.OPERATOR_ALERT_WEBHOOK,
-  inviteOnly: env.AGENT_WORLD_INVITE_ONLY === "true",
-  inviteUserIds: (env.AGENT_WORLD_INVITE_USER_IDS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
-  maxCharactersPerUser:
-    Number(
-      env.AGENT_WORLD_MAX_CHARACTERS_PER_USER ?? MAX_CHARACTERS_PER_USER,
-    ) || MAX_CHARACTERS_PER_USER,
-  maxFundingMicros:
-    Number(env.AGENT_WORLD_MAX_FUNDING_MICROS ?? 1_000_000) || 1_000_000,
-  mutationLimit: Number(env.AGENT_WORLD_MUTATION_LIMIT ?? 30) || 30,
-  mutationWindowMs:
-    Number(env.AGENT_WORLD_MUTATION_WINDOW_MS ?? 60_000) || 60_000,
-  drainLimit: Number(env.AGENT_WORLD_DRAIN_LIMIT ?? 20) || 20,
-  leaseMs: Number(env.AGENT_WORLD_JOB_LEASE_MS ?? 120_000) || 120_000,
-  maxAttempts: Number(env.AGENT_WORLD_JOB_MAX_ATTEMPTS ?? 5) || 5,
-  eventKeep: Number(env.AGENT_WORLD_EVENT_KEEP ?? 500) || 500,
-  eventMaxAgeMs:
-    Number(env.AGENT_WORLD_EVENT_MAX_AGE_MS ?? 14 * 24 * 60 * 60 * 1000) ||
-    14 * 24 * 60 * 60 * 1000,
-  walletLive: env.AGENT_WORLD_LIVE_WALLETS === "true",
-});
+): HostedEnv => {
+  const tick = parseTickIntervalMin(env.AGENT_WORLD_TICK_INTERVAL_MIN);
+  return {
+    neonAuthBaseUrl: env.NEON_AUTH_BASE_URL?.replace(/\/$/, ""),
+    cronSecret: env.CRON_SECRET,
+    adminUserIds: (env.AGENT_WORLD_ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    webOrigins: (env.AGENT_WORLD_WEB_ORIGIN ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    operatorAlertWebhook: env.OPERATOR_ALERT_WEBHOOK,
+    inviteOnly: env.AGENT_WORLD_INVITE_ONLY === "true",
+    inviteUserIds: (env.AGENT_WORLD_INVITE_USER_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    maxCharactersPerUser:
+      Number(
+        env.AGENT_WORLD_MAX_CHARACTERS_PER_USER ?? MAX_CHARACTERS_PER_USER,
+      ) || MAX_CHARACTERS_PER_USER,
+    maxFundingMicros:
+      Number(env.AGENT_WORLD_MAX_FUNDING_MICROS ?? 1_000_000) || 1_000_000,
+    mutationLimit: Number(env.AGENT_WORLD_MUTATION_LIMIT ?? 30) || 30,
+    mutationWindowMs:
+      Number(env.AGENT_WORLD_MUTATION_WINDOW_MS ?? 60_000) || 60_000,
+    drainLimit: Number(env.AGENT_WORLD_DRAIN_LIMIT ?? 20) || 20,
+    leaseMs: Number(env.AGENT_WORLD_JOB_LEASE_MS ?? 120_000) || 120_000,
+    maxAttempts: Number(env.AGENT_WORLD_JOB_MAX_ATTEMPTS ?? 5) || 5,
+    eventKeep: Number(env.AGENT_WORLD_EVENT_KEEP ?? 500) || 500,
+    eventMaxAgeMs:
+      Number(env.AGENT_WORLD_EVENT_MAX_AGE_MS ?? 14 * 24 * 60 * 60 * 1000) ||
+      14 * 24 * 60 * 60 * 1000,
+    tickIntervalMin: tick.minutes,
+    tickIntervalInvalid: tick.invalid,
+    walletLive: env.AGENT_WORLD_LIVE_WALLETS === "true",
+  };
+};
 
 export const isAdmin = (env: HostedEnv, userId: string): boolean =>
   new Set(env.adminUserIds).has(userId);
@@ -1407,6 +1421,38 @@ export function createHandler(deps: HostedDeps) {
           !(await requireAdmin(deps, request, response))
         )
           return;
+        if (deps.env.tickIntervalInvalid) {
+          log({
+            level: "warn",
+            msg: `AGENT_WORLD_TICK_INTERVAL_MIN invalid; using default ${DEFAULT_TICK_INTERVAL_MIN}`,
+            path,
+            requestId,
+            kind: "TICK_INTERVAL_INVALID",
+          });
+        }
+        const now = deps.now();
+        const world = await deps.store.getWorldState();
+        if (
+          shouldSkipWorldTick(world.lastTickAt, now, deps.env.tickIntervalMin)
+        ) {
+          log({
+            level: "info",
+            msg: `world tick skipped; last successful tick within ${deps.env.tickIntervalMin}m`,
+            path,
+            requestId,
+            kind: "WORLD_TICK_SKIPPED",
+          });
+          return send(response, 200, {
+            processed: 0,
+            pendingDue: 0,
+            recovered: 0,
+            skipped: true,
+            tickIntervalMin: deps.env.tickIntervalMin,
+            lastTickAt: world.lastTickAt,
+            nextTickAt:
+              world.lastTickAt + tickIntervalMs(deps.env.tickIntervalMin),
+          });
+        }
         const limit = Math.max(
           1,
           Math.min(
@@ -1418,6 +1464,7 @@ export function createHandler(deps: HostedDeps) {
           deps.store,
           autonomyOptions(deps, limit),
         );
+        await deps.store.recordWorldTick(now);
         if (result.recovered > 0) {
           const alert = {
             level: "alert" as const,
@@ -1441,7 +1488,12 @@ export function createHandler(deps: HostedDeps) {
             deps.fetch,
           );
         }
-        return send(response, 200, result);
+        return send(response, 200, {
+          ...result,
+          skipped: false,
+          tickIntervalMin: deps.env.tickIntervalMin,
+          lastTickAt: now,
+        });
       }
 
       send(response, 404, { error: "Not found" });

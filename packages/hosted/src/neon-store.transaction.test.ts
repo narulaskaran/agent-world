@@ -51,6 +51,9 @@ describe("NeonStore.ensureSchema", () => {
     const store = new NeonStore(sql);
     await expect(store.ensureSchema()).resolves.toBeUndefined();
     expect(
+      statements.some((statement) => statement.includes("last_tick_at")),
+    ).toBe(true);
+    expect(
       statements.some((statement) => statement.includes("viewer_presence")),
     ).toBe(true);
     expect(

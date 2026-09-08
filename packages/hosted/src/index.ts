@@ -17,6 +17,12 @@ import {
 import { NeonStore, type NeonSql } from "./neon-store.js";
 
 export { createHandler, parseEnv, isAdmin, hasCronAccess } from "./handler.js";
+export {
+  DEFAULT_TICK_INTERVAL_MIN,
+  parseTickIntervalMin,
+  shouldSkipWorldTick,
+  tickIntervalMs,
+} from "./tick-interval.js";
 export { MemoryStore } from "./memory-store.js";
 export { NeonStore } from "./neon-store.js";
 export { runAutonomy, executeJob, enqueueTick, positionAt } from "./jobs.js";

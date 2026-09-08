@@ -14,6 +14,10 @@
   3. Retention: delete completed `character_queue` rows; cap/prune artifacts (keep 80) and conversations (same keep/max-age as events). `listMemories` is by `character_id` only (export no longer dumps the table).
   4. Tick path: batch `FOR UPDATE SKIP LOCKED` claims (`LIMIT n`); `getRelationship` point-reads instead of full `listRelationships()` on QStash drains.
 - OpenRouter (#3), sampled presence, and live Privy/onramp stay out of scope.
+- **World tick cadence:** `AGENT_WORLD_TICK_INTERVAL_MIN` ∈ {10, 30, 60}
+  (default 10; invalid values fail closed to 10). QStash can keep firing every
+  10 minutes; `/api/jobs/run` skips autonomy drain until the interval elapses.
+  Spectator poll stays ~4s + ETag and still does not advance the world.
 
 ---
 

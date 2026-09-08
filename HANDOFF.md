@@ -9,10 +9,11 @@ The deterministic hosted slice is live at:
 
 The Vercel project is connected to this repository and deploys `main` to
 production. Its Neon marketplace resource supplies Postgres and Neon Auth
-environment variables. Migrations `db/migrations/0001_hosted.sql` and
-`db/migrations/0002_hosted.sql` are checked in; `NeonStore.ensureSchema()`
-applies additive 0002 statements at runtime on mutations and `/api/jobs/run`
-(once per process), never on spectator `GET /api/state`. Wallet/payment DDL from
+environment variables. Migrations `db/migrations/0001_hosted.sql`,
+`db/migrations/0002_hosted.sql`, and `db/migrations/0004_world_tick.sql` are
+checked in; `NeonStore.ensureSchema()` applies additive 0002/0004 statements at
+runtime on mutations and `/api/jobs/run` (once per process), never on spectator
+`GET /api/state`. Wallet/payment DDL from
 `0003_wallet_payment.sql` is best-effort, runs only on wallet routes via
 `ensureWalletSchema()`, and must not run on `/health` or spectator `/state`.
 Neon HTTP 402 data-transfer quota is treated as `DATABASE_UNAVAILABLE` (503)
@@ -31,15 +32,18 @@ The implementation is primarily in:
 
 - `packages/hosted`: HTTP handler, job runner, MemoryStore tests, NeonStore.
 - `api/index.ts`: Vercel Function entry that re-exports the hosted handler.
-- `db/migrations/0001_hosted.sql` and `0002_hosted.sql`: hosted Postgres schema.
+- `db/migrations/0001_hosted.sql`, `0002_hosted.sql`, and `0004_world_tick.sql`:
+  hosted Postgres schema (last successful world tick lives on `world_state`).
 - `apps/web/src/auth.ts`, `apps/web/src/api.ts`, and `apps/web/src/App.tsx`:
   Neon Auth, session-derived ownership, polling, and authenticated controls.
 - `vercel.json`: monorepo build, API rewrite, daily Hobby-compatible cron.
 - Upstash QStash marketplace integration (`upstash-qstash-sky-ferry`, schedule
   `scd_7Bh9SNqWXfhxev2WiSYTGQ5CwNxb`): every-10-minute authenticated
   `GET /api/jobs/run` (`Authorization: Bearer $CRON_SECRET`), independent of
-  Vercel Hobby's daily-cron limit. Manage it in the Upstash console or via
-  `QSTASH_TOKEN` (a Vercel-provisioned Production env var) against
+  Vercel Hobby's daily-cron limit. The handler spaces world advances with
+  env-only `AGENT_WORLD_TICK_INTERVAL_MIN` (10, 30, or 60; default 10) even
+  when the schedule stays at 10 minutes. Manage the schedule in the Upstash
+  console or via `QSTASH_TOKEN` (a Vercel-provisioned Production env var) against
   `https://qstash.upstash.io/v2/schedules`.
 - `.github/workflows/check.yml`: `pnpm check`, with live Neon SKIP LOCKED when a
   test database URL is available (secret or disposable neon.new).

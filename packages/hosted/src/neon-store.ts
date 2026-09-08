@@ -53,7 +53,8 @@ const WORLD_SCHEMA_STATEMENTS = [
     server_daily_budget_micros bigint NOT NULL DEFAULT 2000000,
     server_spent_today_micros bigint NOT NULL DEFAULT 0,
     budget_date text NOT NULL DEFAULT '',
-    updated_at bigint NOT NULL DEFAULT 0
+    updated_at bigint NOT NULL DEFAULT 0,
+    last_tick_at bigint NOT NULL DEFAULT 0
   )`,
   `INSERT INTO world_state (id, budget_date, updated_at)
     VALUES (1, to_char(current_date, 'YYYY-MM-DD'), (extract(epoch from now()) * 1000)::bigint)
@@ -170,6 +171,7 @@ const WORLD_SCHEMA_STATEMENTS = [
   )`,
   "DROP INDEX IF EXISTS characters_owner_unique",
   "CREATE INDEX IF NOT EXISTS characters_owner_idx ON characters (owner_id)",
+  "ALTER TABLE world_state ADD COLUMN IF NOT EXISTS last_tick_at bigint NOT NULL DEFAULT 0",
   "ALTER TABLE characters ADD COLUMN IF NOT EXISTS reputation integer NOT NULL DEFAULT 0",
   "ALTER TABLE characters ADD COLUMN IF NOT EXISTS location_id text",
   "ALTER TABLE characters ADD COLUMN IF NOT EXISTS muted boolean NOT NULL DEFAULT false",
@@ -428,6 +430,7 @@ export class NeonStore implements HostedStore {
         serverSpentTodayMicros: Number(row.server_spent_today_micros ?? 0),
         budgetDate: String(row.budget_date ?? ""),
         updatedAt: Number(row.updated_at ?? 0),
+        lastTickAt: Number(row.last_tick_at ?? 0) || 0,
       };
     } catch (error) {
       this.rememberDbError(error);
@@ -441,6 +444,10 @@ export class NeonStore implements HostedStore {
 
   async setServerBudget(micros: number, now: number): Promise<void> {
     await this.sql()`UPDATE world_state SET server_daily_budget_micros = ${micros}, updated_at = ${now} WHERE id = 1`;
+  }
+
+  async recordWorldTick(now: number): Promise<void> {
+    await this.sql()`UPDATE world_state SET last_tick_at = ${now} WHERE id = 1`;
   }
 
   async resetWorld(now: number): Promise<void> {
@@ -460,7 +467,7 @@ export class NeonStore implements HostedStore {
       "characters",
     ])
       await sql.query(`DELETE FROM ${table}`);
-    await sql`UPDATE world_state SET simulation_paused = false, paused_at = 0, server_spent_today_micros = 0, budget_date = ${new Date(now).toISOString().slice(0, 10)}, updated_at = ${now} WHERE id = 1`;
+    await sql`UPDATE world_state SET simulation_paused = false, paused_at = 0, server_spent_today_micros = 0, budget_date = ${new Date(now).toISOString().slice(0, 10)}, updated_at = ${now}, last_tick_at = 0 WHERE id = 1`;
   }
 
   async listCharacters(): Promise<CharacterRow[]> {

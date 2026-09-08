@@ -921,6 +921,125 @@ describe("hosted product surfaces", () => {
     expect(after?.updatedAt).toBe(5_000);
   });
 
+  it("spaces /jobs/run world ticks by AGENT_WORLD_TICK_INTERVAL_MIN", async () => {
+    class SpyStore extends MemoryStore {
+      claims = 0;
+      override async claimJobs(now: number, leaseMs: number, limit: number) {
+        this.claims += 1;
+        return super.claimJobs(now, leaseMs, limit);
+      }
+    }
+    const store = new SpyStore();
+    const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
+    await store.updateCharacter(moss.id, { nextDecisionAt: 1_000 });
+    let now = 10_000;
+    const handler = makeHandler(store, new Map(), {
+      now: () => now,
+      env: parseEnv({
+        NEON_AUTH_BASE_URL: "https://auth.example.test",
+        CRON_SECRET: "cron-secret",
+        AGENT_WORLD_TICK_INTERVAL_MIN: "30",
+      }),
+    });
+    const first = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().skipped).toBe(false);
+    expect(first.json().processed).toBeGreaterThan(0);
+    expect(first.json().tickIntervalMin).toBe(30);
+    expect(store.claims).toBe(1);
+    const lastTickAt = (await store.getWorldState()).lastTickAt;
+    expect(lastTickAt).toBe(10_000);
+
+    const observe = await invoke(handler, "/state");
+    expect(observe.statusCode).toBe(200);
+    expect((await store.getWorldState()).lastTickAt).toBe(lastTickAt);
+    expect((await store.getCharacter(moss.id))?.updatedAt).toBe(10_000);
+
+    now = 10_000 + 10 * 60_000;
+    const skipped = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(skipped.statusCode).toBe(200);
+    expect(skipped.json()).toMatchObject({
+      skipped: true,
+      processed: 0,
+      tickIntervalMin: 30,
+      lastTickAt: 10_000,
+    });
+    expect(store.claims).toBe(1);
+    expect((await store.getCharacter(moss.id))?.updatedAt).toBe(10_000);
+
+    now = 10_000 + 30 * 60_000;
+    const second = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(second.json().skipped).toBe(false);
+    expect(store.claims).toBe(2);
+  });
+
+  it("lets owner mutations drain immediately inside the world tick interval", async () => {
+    const store = new MemoryStore();
+    const sessions = new Map<string, string | null>([["a=1", "user-a"]]);
+    let now = 20_000;
+    const handler = makeHandler(store, sessions, {
+      now: () => now,
+      env: parseEnv({
+        NEON_AUTH_BASE_URL: "https://auth.example.test",
+        CRON_SECRET: "cron-secret",
+        AGENT_WORLD_TICK_INTERVAL_MIN: "60",
+      }),
+    });
+    await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect((await store.getWorldState()).lastTickAt).toBe(20_000);
+    now = 20_000 + 5 * 60_000;
+    const created = await invoke(handler, "/characters", {
+      method: "POST",
+      cookie: "a=1",
+      body: characterInput,
+    });
+    expect(created.statusCode).toBe(201);
+    const row = await store.getCharacter(created.json().id);
+    expect(row?.updatedAt).toBe(now);
+    expect((await store.getWorldState()).lastTickAt).toBe(20_000);
+  });
+
+  it("fails closed to a 10-minute world tick when the env value is invalid", async () => {
+    const logs: string[] = [];
+    const store = new MemoryStore();
+    const moss = await seedCharacter(store, "user-a", "Moss", 1_000);
+    await store.updateCharacter(moss.id, { nextDecisionAt: 1_000 });
+    let now = 1_000;
+    const handler = makeHandler(store, new Map(), {
+      now: () => now,
+      env: parseEnv({
+        NEON_AUTH_BASE_URL: "https://auth.example.test",
+        CRON_SECRET: "cron-secret",
+        AGENT_WORLD_TICK_INTERVAL_MIN: "15",
+      }),
+      log: (event) =>
+        logs.push(`${event.level}:${event.kind ?? ""}:${event.msg}`),
+    });
+    const first = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().tickIntervalMin).toBe(10);
+    expect(first.json().skipped).toBe(false);
+    expect(logs.some((line) => line.includes("TICK_INTERVAL_INVALID"))).toBe(
+      true,
+    );
+    now = 1_000 + 9 * 60_000;
+    const skipped = await invoke(handler, "/jobs/run", {
+      authorization: "Bearer cron-secret",
+    });
+    expect(skipped.json().skipped).toBe(true);
+    expect((await store.getCharacter(moss.id))?.updatedAt).toBe(1_000);
+  });
+
   it("returns 304 when spectator state is unchanged", async () => {
     const store = new MemoryStore();
     await seedCharacter(store, "user-a", "Moss", 1_000);
@@ -1136,5 +1255,19 @@ describe("shared helpers", () => {
       true,
     );
     expect(isAdmin(parseEnv({}), "b")).toBe(false);
+  });
+
+  it("parses world tick interval from env and fails closed on invalid values", () => {
+    expect(parseEnv({}).tickIntervalMin).toBe(10);
+    expect(parseEnv({}).tickIntervalInvalid).toBe(false);
+    expect(
+      parseEnv({ AGENT_WORLD_TICK_INTERVAL_MIN: "30" }).tickIntervalMin,
+    ).toBe(30);
+    expect(
+      parseEnv({ AGENT_WORLD_TICK_INTERVAL_MIN: "60" }).tickIntervalInvalid,
+    ).toBe(false);
+    const invalid = parseEnv({ AGENT_WORLD_TICK_INTERVAL_MIN: "15" });
+    expect(invalid.tickIntervalMin).toBe(10);
+    expect(invalid.tickIntervalInvalid).toBe(true);
   });
 });

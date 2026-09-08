@@ -8,9 +8,10 @@
 - `packages/db`: SQLite `WorldStore` used by the local server and its tests.
 - `packages/hosted`: hosted HTTP handler, job runner, MemoryStore tests, NeonStore.
 - `api/index.ts`: Vercel Function entry that re-exports `createProductionHandler()`.
-- `db/migrations`: checked-in Postgres SQL. `0002_hosted.sql` is also applied at
-  runtime by `NeonStore.ensureSchema()` on mutations and `/api/jobs/run` (once
-  per process). Spectator `GET /api/state` does not run schema DDL. Wallet/payment
+- `db/migrations`: checked-in Postgres SQL. `0002_hosted.sql` and
+  `0004_world_tick.sql` (`world_state.last_tick_at`) are also applied at runtime
+  by `NeonStore.ensureSchema()` on mutations and `/api/jobs/run` (once per
+  process). Spectator `GET /api/state` does not run schema DDL. Wallet/payment
   DDL from `0003_wallet_payment.sql` is best-effort via `ensureWalletSchema()` on
   wallet routes only and must not run on spectator `/state`.
 - `.github/workflows/check.yml`: `pnpm check` plus optional live Neon claims.
@@ -30,7 +31,12 @@
   poll with ETag/If-None-Match (~4s foreground, pause when hidden, exponential
   backoff on 5xx). Upstash QStash repeats an authenticated
   `GET /api/jobs/run` unattended every 10 minutes (`Authorization: Bearer $CRON_SECRET`);
-  see `HANDOFF.md`.
+  see `HANDOFF.md`. World tick spacing is env-only
+  `AGENT_WORLD_TICK_INTERVAL_MIN` ∈ {10, 30, 60} (default 10). Invalid values
+  fail closed to 10 with a warning log. QStash may still fire every 10 minutes;
+  `/api/jobs/run` skips autonomy drain when the last successful tick is inside
+  that interval. Spectator poll cadence is unchanged and still does not
+  advance the world. No owner/admin UI for v1.
 - `AGENT_WORLD_INVITE_ONLY=true` plus `AGENT_WORLD_INVITE_USER_IDS` can close
   character creation without disabling public observation.
 - Do not enable OpenRouter, Privy, or Stripe in this codebase until those milestones.
