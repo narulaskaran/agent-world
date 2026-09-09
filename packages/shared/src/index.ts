@@ -6,10 +6,7 @@ export const MODEL_OPTIONS = [
   { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
 ] as const;
 
-const MODEL_IDS = MODEL_OPTIONS.map((model) => model.id) as [
-  (typeof MODEL_OPTIONS)[number]["id"],
-  ...(typeof MODEL_OPTIONS)[number]["id"][],
-];
+const MODEL_IDS = MODEL_OPTIONS.map((model) => model.id) as [string, ...string[]];
 
 const CHARACTER_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/;
 
