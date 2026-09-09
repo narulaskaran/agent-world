@@ -6,21 +6,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
 } from "react";
 import { Analytics } from "@vercel/analytics/react";
-import type { FormEvent } from "react";
-import type {
-  CharacterInspect,
-  PublicCharacter,
-  WorldSnapshot,
-} from "@agent-world/shared";
 import {
   MAX_CHARACTERS_PER_USER,
   MODEL_OPTIONS,
   formatUsd,
+  type CharacterInspect,
+  type PublicCharacter,
+  type WorldSnapshot,
 } from "@agent-world/shared";
-import type { Viewer } from "./api";
-import { api, type AdminReport } from "./api";
+import { api, type AdminReport, type Viewer } from "./api";
 import { authClient, authErrorMessage, useAuth } from "./auth";
 import {
   FOREGROUND_POLL_MS,

@@ -1,5 +1,5 @@
 import type { WorldStore } from "@agent-world/db";
-import type { ActionType } from "@agent-world/shared";
+import { hashString, type ActionType } from "@agent-world/shared";
 import { MppxRequester, PaidMppRequestError } from "./mppx.js";
 
 const MAX_LLM_REQUEST_MICROS = 5_000;
@@ -118,12 +118,8 @@ const parseJsonObject = (text: string): Record<string, unknown> => {
   return JSON.parse(fenced.slice(start, end + 1)) as Record<string, unknown>;
 };
 
-const stableIndex = (text: string, length: number): number => {
-  let hash = 0;
-  for (const character of text)
-    hash = (hash * 31 + character.charCodeAt(0)) | 0;
-  return Math.abs(hash) % length;
-};
+const stableIndex = (text: string, length: number): number =>
+  hashString(text) % length;
 
 const cleanPublicMessage = (text: string): string =>
   text
