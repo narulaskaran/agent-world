@@ -31,14 +31,6 @@ export class ApiError extends Error {
   }
 }
 
-export interface StateResponse {
-  snapshot: WorldSnapshot;
-  /** Optional while rolling out the authenticated API to older deployments. */
-  viewer?: Viewer | null;
-  etag?: string;
-  notModified?: boolean;
-}
-
 export interface StateFetchResult {
   snapshot?: WorldSnapshot;
   viewer?: Viewer | null;
@@ -192,11 +184,6 @@ export const api = {
       body: JSON.stringify({ serverDailyBudgetMicros }),
     }),
   resetWorld: () => request("/api/admin/reset", { method: "POST", body: "{}" }),
-  hideEvent: (eventId: string) =>
-    request(`/api/admin/events/${encodeURIComponent(eventId)}/hide`, {
-      method: "POST",
-      body: "{}",
-    }),
   resolveReport: (reportId: string) =>
     request(`/api/admin/reports/${encodeURIComponent(reportId)}/resolve`, {
       method: "POST",

@@ -6,6 +6,10 @@ export const MODEL_OPTIONS = [
   { id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
 ] as const;
 
+const MODEL_IDS = MODEL_OPTIONS.map((model) => model.id) as [string, ...string[]];
+
+const CHARACTER_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/;
+
 export const CharacterStateSchema = z.enum([
   "active",
   "moving",
@@ -39,14 +43,9 @@ export const CreateCharacterSchema = z.object({
     .trim()
     .min(2)
     .max(24)
-    .regex(
-      /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/,
-      "Use letters, numbers, spaces, _ or -",
-    ),
+    .regex(CHARACTER_NAME_PATTERN, "Use letters, numbers, spaces, _ or -"),
   personality: z.string().trim().min(10).max(800),
-  model: z.enum(
-    MODEL_OPTIONS.map((model) => model.id) as [string, ...string[]],
-  ),
+  model: z.enum(MODEL_IDS),
   dailyBudgetMicros: z.number().int().min(50_000).max(2_000_000),
   decisionIntervalSeconds: z.number().int().min(30).max(900).default(60),
   firstMission: FirstMissionSchema,
@@ -55,9 +54,7 @@ export type CreateCharacterInput = z.infer<typeof CreateCharacterSchema>;
 
 export const UpdateCharacterSchema = z.object({
   personality: z.string().trim().min(10).max(800).optional(),
-  model: z
-    .enum(MODEL_OPTIONS.map((model) => model.id) as [string, ...string[]])
-    .optional(),
+  model: z.enum(MODEL_IDS).optional(),
   dailyBudgetMicros: z.number().int().min(50_000).max(2_000_000).optional(),
   decisionIntervalSeconds: z.number().int().min(30).max(900).optional(),
   paused: z.boolean().optional(),
@@ -100,14 +97,9 @@ export const CharacterExportSchema = z.object({
     .trim()
     .min(2)
     .max(24)
-    .regex(
-      /^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/,
-      "Use letters, numbers, spaces, _ or -",
-    ),
+    .regex(CHARACTER_NAME_PATTERN, "Use letters, numbers, spaces, _ or -"),
   personality: z.string().trim().min(10).max(800),
-  model: z.enum(
-    MODEL_OPTIONS.map((model) => model.id) as [string, ...string[]],
-  ),
+  model: z.enum(MODEL_IDS),
   memories: z
     .array(
       z.object({
@@ -317,11 +309,15 @@ export const LOCATION_WAYPOINTS: Record<
   ],
 };
 
-export function hashString(value: string): number {
+function stringHash(value: string): number {
   let result = 0;
   for (const character of value)
     result = (result * 31 + character.charCodeAt(0)) | 0;
-  return Math.abs(result);
+  return result;
+}
+
+export function hashString(value: string): number {
+  return Math.abs(stringHash(value));
 }
 
 export function locationAtPoint(
@@ -359,8 +355,6 @@ export const formatUsd = (micros: number): string =>
   `$${(micros / 1_000_000).toFixed(2)}`;
 
 export function nameColor(name: string): string {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   const palette = [
     "#e26d5a",
     "#579c87",
@@ -369,5 +363,5 @@ export function nameColor(name: string): string {
     "#d69b45",
     "#548db4",
   ];
-  return palette[Math.abs(hash) % palette.length] ?? "#579c87";
+  return palette[Math.abs(stringHash(name)) % palette.length] ?? "#579c87";
 }

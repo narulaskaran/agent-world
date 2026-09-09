@@ -25,7 +25,13 @@ import {
   type AutonomyOptions,
 } from "./jobs.js";
 import { ifNoneMatchHits, worldSnapshotEtag } from "./observe.js";
-import type { BoardCharacterRow, CharacterRow, HostedStore } from "./store.js";
+import {
+  MEMORY_KEEP_PER_CHARACTER,
+  RELATIONSHIP_KEEP_PER_CHARACTER,
+  type BoardCharacterRow,
+  type CharacterRow,
+  type HostedStore,
+} from "./store.js";
 import {
   DEFAULT_TICK_INTERVAL_MIN,
   parseTickIntervalMin,
@@ -33,10 +39,6 @@ import {
   tickIntervalMs,
   type TickIntervalMin,
 } from "./tick-interval.js";
-import {
-  MEMORY_KEEP_PER_CHARACTER,
-  RELATIONSHIP_KEEP_PER_CHARACTER,
-} from "./store.js";
 import {
   assertIdempotencyKey,
   PaymentError,
@@ -124,6 +126,12 @@ const errorMessage = (error: unknown): string =>
 
 const today = (now: number): string => new Date(now).toISOString().slice(0, 10);
 
+const csv = (value: string | undefined): string[] =>
+  (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 const pathFor = (
   request: Request,
 ): { path: string; search: URLSearchParams } => {
@@ -147,20 +155,11 @@ export const parseEnv = (
   return {
     neonAuthBaseUrl: env.NEON_AUTH_BASE_URL?.replace(/\/$/, ""),
     cronSecret: env.CRON_SECRET,
-    adminUserIds: (env.AGENT_WORLD_ADMIN_USER_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
-    webOrigins: (env.AGENT_WORLD_WEB_ORIGIN ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
+    adminUserIds: csv(env.AGENT_WORLD_ADMIN_USER_IDS),
+    webOrigins: csv(env.AGENT_WORLD_WEB_ORIGIN),
     operatorAlertWebhook: env.OPERATOR_ALERT_WEBHOOK,
     inviteOnly: env.AGENT_WORLD_INVITE_ONLY === "true",
-    inviteUserIds: (env.AGENT_WORLD_INVITE_USER_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
+    inviteUserIds: csv(env.AGENT_WORLD_INVITE_USER_IDS),
     maxCharactersPerUser:
       Number(
         env.AGENT_WORLD_MAX_CHARACTERS_PER_USER ?? MAX_CHARACTERS_PER_USER,
@@ -184,7 +183,7 @@ export const parseEnv = (
 };
 
 export const isAdmin = (env: HostedEnv, userId: string): boolean =>
-  new Set(env.adminUserIds).has(userId);
+  env.adminUserIds.includes(userId);
 
 export const hasCronAccess = (env: HostedEnv, request: Request): boolean =>
   Boolean(
@@ -347,7 +346,7 @@ const requireUser = async (
       return null;
     }
     return userId;
-  } catch (error) {
+  } catch {
     const requestId = crypto.randomUUID();
     (deps.log ?? logEvent)({
       level: "error",
@@ -402,12 +401,11 @@ export async function fetchSessionUserId(
   fetchImpl: typeof fetch,
 ): Promise<string | null> {
   if (!baseUrl) return null;
+  const cookie = header(request, "cookie");
   const response = await fetchImpl(`${baseUrl}/get-session`, {
     headers: {
       accept: "application/json",
-      ...(header(request, "cookie")
-        ? { cookie: header(request, "cookie")! }
-        : {}),
+      ...(cookie ? { cookie } : {}),
     },
   });
   if (!response.ok) return null;

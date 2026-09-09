@@ -279,10 +279,7 @@ const executeTick = async (
     (row) => row.id !== character.id && !row.paused && !row.muted,
   );
   const here = others.filter(
-    (row) =>
-      row.locationId &&
-      row.locationId === character.locationId &&
-      row.locationId !== null,
+    (row) => row.locationId && row.locationId === character.locationId,
   );
   const roll = hashString(`${character.id}:${now}`) % 5;
   if (here.length >= 2 && roll === 0) {
@@ -293,7 +290,6 @@ const executeTick = async (
     await startConversation(store, [character, here[0]!], now, true);
     return;
   }
-  await settlePosition(store, character, now);
   if (roll === 2) {
     const location =
       WORLD_LOCATIONS[
@@ -451,17 +447,7 @@ export async function executeJob(
       nextDecisionAt: nextAt,
       updatedAt: now,
     });
-    await store.enqueueJob({
-      id: newId(),
-      characterId: character.id,
-      kind: "tick",
-      payload: {},
-      priority: 10,
-      dedupeKey: "tick",
-      notBefore: nextAt,
-      expiresAt: nextAt + QUEUE_EXPIRY_MS,
-      createdAt: now,
-    });
+    await enqueueTick(store, character.id, nextAt, now);
   }
 }
 

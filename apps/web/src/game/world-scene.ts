@@ -222,7 +222,7 @@ export class WorldScene {
       .sort()
       .join(",");
     if (!this.userMovedCamera && key !== this.framedKey) {
-      this.applyLivingFrame(true);
+      this.applyLivingFrame(true, key);
     }
   }
 
@@ -235,16 +235,18 @@ export class WorldScene {
     });
   }
 
-  private applyLivingFrame(immediate: boolean) {
+  private applyLivingFrame(immediate: boolean, framedKey?: string) {
     const aspect =
       Math.max(1, this.host.clientWidth) / Math.max(1, this.host.clientHeight);
     const frame = framePoints(this.livingFrameSamples(), aspect);
     this.desiredTarget.set(frame.x, 0, frame.z);
     this.desiredDistance = frame.distance;
-    this.framedKey = (this.snapshot?.characters ?? [])
-      .map((character) => character.id)
-      .sort()
-      .join(",");
+    this.framedKey =
+      framedKey ??
+      (this.snapshot?.characters ?? [])
+        .map((character) => character.id)
+        .sort()
+        .join(",");
     if (immediate) this.applyCamera(true);
   }
 

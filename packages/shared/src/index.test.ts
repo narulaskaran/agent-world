@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CreateCharacterSchema, hashString, locationAtPoint, nameColor } from "./index.js";
+import { CreateCharacterSchema, hashString, locationAtPoint } from "./index.js";
 
 describe("shared contracts", () => {
   it("accepts the intended character creation shape", () => {

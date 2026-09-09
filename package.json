@@ -22,8 +22,5 @@
       "better-sqlite3",
       "esbuild"
     ]
-  },
-  "dependencies": {
-    "@neondatabase/serverless": "^1.1.0"
   }
 }

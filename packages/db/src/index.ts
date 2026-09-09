@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import type {
   CharacterState,
@@ -631,30 +631,40 @@ export class WorldRepository {
       .all();
     const relationshipRows = this.db.select().from(relationships).all();
     const names = new Map(rows.map((row) => [row.id, row.name]));
+    const memoriesByCharacter = new Map<string, PublicMemory[]>();
+    for (const memory of memoryRows) {
+      const item: PublicMemory = {
+        id: memory.id,
+        kind: memory.kind as "fact" | "impression",
+        bullet: memory.bullet,
+        subject: memory.subject,
+        confidence: memory.confidence,
+        createdAt: memory.createdAt,
+      };
+      const list = memoriesByCharacter.get(memory.characterId);
+      if (list) list.push(item);
+      else memoriesByCharacter.set(memory.characterId, [item]);
+    }
+    const relationshipsByCharacter = new Map<string, PublicRelationship[]>();
+    for (const relationship of relationshipRows) {
+      const item: PublicRelationship = {
+        characterId: relationship.otherCharacterId,
+        characterName: names.get(relationship.otherCharacterId) ?? "Unknown",
+        impression: relationship.impression,
+        affinity: relationship.affinity,
+      };
+      const list = relationshipsByCharacter.get(relationship.characterId);
+      if (list) list.push(item);
+      else relationshipsByCharacter.set(relationship.characterId, [item]);
+    }
     const state = this.getWorldState();
     const currentTime =
       state.simulationPaused && state.pausedAt > 0
         ? state.pausedAt
         : Date.now();
     return rows.map((row) => {
-      const publicMemories: PublicMemory[] = memoryRows
-        .filter((memory) => memory.characterId === row.id)
-        .map((memory) => ({
-          id: memory.id,
-          kind: memory.kind as "fact" | "impression",
-          bullet: memory.bullet,
-          subject: memory.subject,
-          confidence: memory.confidence,
-          createdAt: memory.createdAt,
-        }));
-      const publicRelationships: PublicRelationship[] = relationshipRows
-        .filter((relationship) => relationship.characterId === row.id)
-        .map((relationship) => ({
-          characterId: relationship.otherCharacterId,
-          characterName: names.get(relationship.otherCharacterId) ?? "Unknown",
-          impression: relationship.impression,
-          affinity: relationship.affinity,
-        }));
+      const publicMemories = memoriesByCharacter.get(row.id) ?? [];
+      const publicRelationships = relationshipsByCharacter.get(row.id) ?? [];
       const position = this.positionAt(row, currentTime);
       return {
         id: row.id,
