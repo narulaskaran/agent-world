@@ -64,8 +64,8 @@ importers:
         specifier: ^19.1.1
         version: 19.2.8(react@19.2.8)
       three:
-        specifier: ^0.180.0
-        version: 0.180.0
+        specifier: ^0.185.1
+        version: 0.185.1
     devDependencies:
       '@types/react':
         specifier: ^19.1.12
@@ -2743,8 +2743,8 @@ packages:
     resolution: {integrity: sha512-e2zZ96wSChazBsbENf/Pcm/4swHt2cEKQ92rhUjkL9GCKiTDJIaTBenjE/m9DXi0QBmTMDkFDdOomUy20A1tDQ==}
     engines: {node: '>=20'}
 
-  three@0.180.0:
-    resolution: {integrity: sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==}
+  three@0.185.1:
+    resolution: {integrity: sha512-5aojFCXKwnjBRZvUnt3WFfEcvUJgkN5LlijRFN95hMy8WVkG4I0QNcJE+OuWvuJ0bOdStrbfXn0pkd6/QyiAlg==}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -5465,7 +5465,7 @@ snapshots:
     dependencies:
       real-require: 1.0.0
 
-  three@0.180.0: {}
+  three@0.185.1: {}
 
   tinybench@2.9.0: {}
 
