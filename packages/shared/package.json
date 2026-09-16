@@ -12,6 +12,6 @@
     "zod": "^4.1.5"
   },
   "devDependencies": {
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.0"
   }
 }
