@@ -1,4 +1,5 @@
 import type {
+  CharacterInspect,
   CreateCharacterInput,
   DirectiveInput,
   ServerMessage,
@@ -88,5 +89,30 @@ export class LocalRuntime {
 
   adminState() {
     return this.engine.adminState();
+  }
+
+  inspectCharacter(idOrName: string): CharacterInspect | null {
+    const row = this.repository.getCharacter(idOrName);
+    if (!row) return null;
+    const publicCharacter = this.repository
+      .listPublicCharacters()
+      .find((character) => character.id === row.id);
+    if (!publicCharacter) return null;
+    return {
+      id: publicCharacter.id,
+      name: publicCharacter.name,
+      personality: publicCharacter.personality ?? row.personality,
+      model: publicCharacter.model ?? row.model,
+      dailyBudgetMicros:
+        publicCharacter.dailyBudgetMicros ?? row.dailyBudgetMicros,
+      spentTodayMicros:
+        publicCharacter.spentTodayMicros ?? row.spentTodayMicros,
+      decisionIntervalSeconds:
+        publicCharacter.decisionIntervalSeconds ?? row.decisionIntervalSeconds,
+      reputation: 0,
+      locationId: publicCharacter.locationId,
+      memories: publicCharacter.memories ?? [],
+      relationships: publicCharacter.relationships ?? [],
+    };
   }
 }

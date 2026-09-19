@@ -11,8 +11,6 @@
   },
   "dependencies": {
     "@agent-world/shared": "workspace:*",
-    "@neondatabase/neon-js": "0.7.0-beta",
-    "@vercel/analytics": "^2.0.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "three": "^0.186.0"

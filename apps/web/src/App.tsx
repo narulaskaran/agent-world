@@ -4,30 +4,22 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type FormEvent,
 } from "react";
-import { Analytics } from "@vercel/analytics/react";
 import {
-  MAX_CHARACTERS_PER_USER,
   MODEL_OPTIONS,
   formatUsd,
   type CharacterInspect,
   type PublicCharacter,
   type WorldSnapshot,
 } from "@agent-world/shared";
-import { api, type AdminReport, type Viewer } from "./api";
-import { authClient, authErrorMessage, useAuth } from "./auth";
-import {
-  FOREGROUND_POLL_MS,
-  isStateUnavailable,
-  nextPollDelayMs,
-} from "./poll";
+import { api } from "./api";
+import { useWorld } from "./ws";
 import {
   PUBLIC_RECORD_LIMIT,
+  eventDetail,
   eventDetailsLabel,
-  guestEventDetail,
   shortDisplayId,
   shortenFeedSummary,
 } from "./public-record";
@@ -53,91 +45,7 @@ function useDismissOnEscape(onClose: () => void) {
   }, [onClose]);
 }
 
-function useWorld() {
-  const [snapshot, setSnapshot] = useState<WorldSnapshot | null>(null);
-  const [viewer, setViewer] = useState<Viewer | null>(null);
-  const [connected, setConnected] = useState(false);
-  const sessionChecked = useRef(false);
-  const etagRef = useRef<string | undefined>(undefined);
-  const backoffRef = useRef(FOREGROUND_POLL_MS);
-
-  const refresh = useCallback(async () => {
-    if (
-      typeof document !== "undefined" &&
-      document.visibilityState === "hidden"
-    )
-      return;
-    try {
-      const state = await api.state(etagRef.current);
-      if (state.etag) etagRef.current = state.etag;
-      if (!state.notModified && state.snapshot) {
-        setSnapshot(state.snapshot);
-        if (state.viewer !== undefined) {
-          setViewer(state.viewer);
-          sessionChecked.current = true;
-        } else if (!sessionChecked.current) {
-          // Older API deployments return a flat snapshot. Ask the compatibility
-          // session endpoint once so ownership still comes from the server.
-          try {
-            const session = await api.session();
-            setViewer(session.viewer);
-          } catch {
-            setViewer(null);
-          } finally {
-            sessionChecked.current = true;
-          }
-        }
-      }
-      setConnected(true);
-      backoffRef.current = FOREGROUND_POLL_MS;
-    } catch (error) {
-      setConnected(false);
-      backoffRef.current =
-        nextPollDelayMs({
-          visible: true,
-          unavailable: isStateUnavailable(error),
-          previousDelayMs: backoffRef.current,
-        }) ?? FOREGROUND_POLL_MS;
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer = 0;
-
-    const loop = async () => {
-      if (cancelled) return;
-      if (document.visibilityState !== "hidden") await refresh();
-      if (cancelled) return;
-      const delay =
-        document.visibilityState === "hidden" ? null : backoffRef.current;
-      if (delay == null) return;
-      timer = window.setTimeout(() => void loop(), delay);
-    };
-
-    void loop();
-    const onVisible = () => {
-      window.clearTimeout(timer);
-      if (document.visibilityState === "visible") void loop();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [refresh]);
-
-  return { snapshot, viewer, connected, refresh };
-}
-
-function CreateModal({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: () => void;
-}) {
+function CreateModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [personality, setPersonality] = useState("");
   const [model, setModel] = useState<string>(MODEL_OPTIONS[0].id);
@@ -160,7 +68,6 @@ function CreateModal({
         decisionIntervalSeconds: 60,
         firstMission: mission,
       });
-      onCreated();
       onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -203,109 +110,81 @@ function CreateModal({
               autoFocus
             />
           </label>
-          <>
+          <label>
+            Personality
+            <textarea
+              value={personality}
+              onChange={(event) => setPersonality(event.target.value)}
+              minLength={10}
+              maxLength={800}
+              required
+              placeholder="Curious, earnest, and slightly obsessed with tiny gardens…"
+              rows={4}
+            />
+            <small>
+              This shapes how your character speaks, explores, and remembers.
+            </small>
+          </label>
+          <div className="form-grid">
             <label>
-              Personality
-              <textarea
-                value={personality}
-                onChange={(event) => setPersonality(event.target.value)}
-                minLength={10}
-                maxLength={800}
-                required
-                placeholder="Curious, earnest, and slightly obsessed with tiny gardens…"
-                rows={4}
-              />
-              <small>
-                This shapes how your character speaks, explores, and remembers.
-              </small>
+              Mind
+              <select
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                {MODEL_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
-            <div className="form-grid">
-              <label>
-                Mind
-                <select
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                >
-                  {MODEL_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Daily budget
-                <div className="money-input">
-                  <span>$</span>
-                  <input
-                    type="number"
-                    min="0.05"
-                    max="2"
-                    step="0.05"
-                    value={budget}
-                    onChange={(event) => setBudget(event.target.value)}
-                    required
-                  />
-                </div>
-              </label>
-            </div>
-            <fieldset>
-              <legend>First adventure</legend>
-              <div className="mission-grid">
-                <button
-                  type="button"
-                  className={`mission ${mission === "meet" ? "selected" : ""}`}
-                  onClick={() => setMission("meet")}
-                >
-                  <span className="mission-icon">☕</span>
-                  <strong>Meet someone</strong>
-                  <small>Find another agent and start a conversation.</small>
-                </button>
-                <button
-                  type="button"
-                  className={`mission ${mission === "explore" ? "selected" : ""}`}
-                  onClick={() => setMission("explore")}
-                >
-                  <span className="mission-icon">🧭</span>
-                  <strong>Explore the world</strong>
-                  <small>
-                    Wander through the plaza, park, café, and library.
-                  </small>
-                </button>
+            <label>
+              Daily budget
+              <div className="money-input">
+                <span>$</span>
+                <input
+                  type="number"
+                  min="0.05"
+                  max="2"
+                  step="0.05"
+                  value={budget}
+                  onChange={(event) => setBudget(event.target.value)}
+                  required
+                />
               </div>
-            </fieldset>
-          </>
+            </label>
+          </div>
+          <fieldset>
+            <legend>First adventure</legend>
+            <div className="mission-grid">
+              <button
+                type="button"
+                className={`mission ${mission === "meet" ? "selected" : ""}`}
+                onClick={() => setMission("meet")}
+              >
+                <span className="mission-icon">☕</span>
+                <strong>Meet someone</strong>
+                <small>Find another agent and start a conversation.</small>
+              </button>
+              <button
+                type="button"
+                className={`mission ${mission === "explore" ? "selected" : ""}`}
+                onClick={() => setMission("explore")}
+              >
+                <span className="mission-icon">🧭</span>
+                <strong>Explore the world</strong>
+                <small>
+                  Wander through the plaza, park, café, and library.
+                </small>
+              </button>
+            </div>
+          </fieldset>
           {error && (
             <p className="form-error" role="alert">
               {error}
             </p>
           )}
-          <label className="restore-export">
-            Restore from export
-            <input
-              type="file"
-              accept="application/json,.json"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                void file.text().then(async (text) => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    await api.importCharacter(JSON.parse(text));
-                    onCreated();
-                    onClose();
-                  } catch (caught) {
-                    setError(
-                      caught instanceof Error ? caught.message : String(caught),
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                });
-              }}
-            />
-          </label>
           <button className="primary wide" disabled={busy}>
             {busy ? "Opening the gate…" : "Enter Agent World"}
           </button>
@@ -317,14 +196,11 @@ function CreateModal({
 
 function CharacterInspector({
   character,
-  ownedCharacterIds,
   onClose,
 }: {
   character: PublicCharacter;
-  ownedCharacterIds: string[];
   onClose: () => void;
 }) {
-  const owned = ownedCharacterIds.includes(character.id);
   const [tab, setTab] = useState<"overview" | "memory" | "controls">(
     "overview",
   );
@@ -332,9 +208,6 @@ function CharacterInspector({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [artifactTitle, setArtifactTitle] = useState("A small note");
-  const [artifactBody, setArtifactBody] = useState("");
-  const [reportReason, setReportReason] = useState("");
   const [detail, setDetail] = useState<CharacterInspect | null>(null);
   const personality = detail?.personality ?? character.personality;
   const memories = detail?.memories ?? character.memories ?? [];
@@ -343,7 +216,6 @@ function CharacterInspector({
     detail?.spentTodayMicros ?? character.spentTodayMicros ?? 0;
   const dailyBudgetMicros =
     detail?.dailyBudgetMicros ?? character.dailyBudgetMicros ?? 0;
-  const reputation = detail?.reputation ?? character.reputation ?? 0;
   const modelId = detail?.model ?? character.model;
   const decisionIntervalSeconds =
     detail?.decisionIntervalSeconds ?? character.decisionIntervalSeconds ?? 60;
@@ -417,7 +289,6 @@ function CharacterInspector({
             {modelLabel}
             {character.locationId ? ` · ${character.locationId}` : ""}
           </p>
-          <p className="model-label">Reputation {reputation}</p>
         </div>
       </div>
       <div
@@ -436,7 +307,6 @@ function CharacterInspector({
             key={id}
             role="tab"
             aria-selected={tab === id}
-            disabled={id === "controls" && !owned}
             className={tab === id ? "active" : ""}
             onClick={() => setTab(id)}
           >
@@ -457,33 +327,6 @@ function CharacterInspector({
               <h3>Right now</h3>
               <p className="intent-card">{character.intent}</p>
             </section>
-            {!owned && (
-              <section>
-                <h3>Moderation</h3>
-                <textarea
-                  value={reportReason}
-                  onChange={(event) => setReportReason(event.target.value)}
-                  placeholder="Report this character to operators…"
-                  rows={2}
-                  maxLength={500}
-                />
-                <button
-                  className="secondary wide"
-                  disabled={busy || reportReason.trim().length < 4}
-                  onClick={() =>
-                    void perform(async () => {
-                      await api.report({
-                        characterId: character.id,
-                        reason: reportReason.trim(),
-                      });
-                      setReportReason("");
-                    })
-                  }
-                >
-                  Send report
-                </button>
-              </section>
-            )}
             <section>
               <h3>Personality</h3>
               <p>
@@ -534,15 +377,7 @@ function CharacterInspector({
           </div>
         )}
 
-        {tab === "controls" && !owned && (
-          <div className="inspector-pane" role="tabpanel">
-            <p className="empty-copy">
-              Sign in as this character&apos;s owner to open controls.
-            </p>
-          </div>
-        )}
-
-        {tab === "controls" && owned && (
+        {tab === "controls" && (
           <div className="inspector-pane" role="tabpanel">
             <section className="owner-panel">
               <div className="owner-title">
@@ -680,62 +515,7 @@ function CharacterInspector({
                 >
                   New avatar
                 </button>
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void perform(async () => {
-                      const exported = await api.exportCharacter(
-                        character.name,
-                      );
-                      const blob = new Blob(
-                        [JSON.stringify(exported, null, 2)],
-                        {
-                          type: "application/json",
-                        },
-                      );
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = `${character.name}.agent.json`;
-                      link.click();
-                      URL.revokeObjectURL(url);
-                    })
-                  }
-                >
-                  Export
-                </button>
               </div>
-              <label>
-                Leave something behind
-                <input
-                  value={artifactTitle}
-                  onChange={(event) => setArtifactTitle(event.target.value)}
-                  maxLength={80}
-                />
-                <textarea
-                  value={artifactBody}
-                  onChange={(event) => setArtifactBody(event.target.value)}
-                  placeholder="A note, sketch, or tiny object for the next visitor…"
-                  rows={2}
-                  maxLength={400}
-                />
-              </label>
-              <button
-                className="secondary wide"
-                disabled={busy || artifactBody.trim().length < 2}
-                onClick={() =>
-                  void perform(async () => {
-                    await api.leaveArtifact(character.name, {
-                      kind: "note",
-                      title: artifactTitle.trim() || "A small note",
-                      body: artifactBody.trim(),
-                    });
-                    setArtifactBody("");
-                  })
-                }
-              >
-                Leave in the world
-              </button>
               <button
                 className="danger-link"
                 onClick={() => {
@@ -765,134 +545,6 @@ function CharacterInspector({
   );
 }
 
-function AuthModal({ onClose }: { onClose: () => void }) {
-  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  useDismissOnEscape(onClose);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const result =
-        mode === "sign-in"
-          ? await authClient.signIn.email({ email, password })
-          : await authClient.signUp.email({ email, password, name });
-      const authError = authErrorMessage(result);
-      if (authError) throw new Error(authError);
-      // The API derives ownership from the authenticated server session. A
-      // session refresh also makes the viewer identity available immediately.
-      await api.session().catch(() => undefined);
-      onClose();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      className="modal-backdrop"
-      role="presentation"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
-      <section
-        className="modal auth-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="auth-title"
-      >
-        <button
-          className="icon-button close"
-          onClick={onClose}
-          aria-label="Close"
-        >
-          ×
-        </button>
-        <p className="eyebrow">A durable place in the world</p>
-        <h2 id="auth-title">
-          {mode === "sign-in" ? "Welcome back" : "Join Agent World"}
-        </h2>
-        <div className="segmented" aria-label="Authentication mode">
-          <button
-            className={mode === "sign-in" ? "active" : ""}
-            onClick={() => setMode("sign-in")}
-            type="button"
-          >
-            Sign in
-          </button>
-          <button
-            className={mode === "sign-up" ? "active" : ""}
-            onClick={() => setMode("sign-up")}
-            type="button"
-          >
-            Create account
-          </button>
-        </div>
-        <form onSubmit={submit}>
-          {mode === "sign-up" && (
-            <label>
-              Your name
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                minLength={2}
-                maxLength={80}
-                required
-                autoFocus
-                placeholder="Ada"
-              />
-            </label>
-          )}
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              autoFocus={mode === "sign-in"}
-              autoComplete="email"
-              placeholder="you@example.com"
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              minLength={8}
-              required
-              autoComplete={
-                mode === "sign-in" ? "current-password" : "new-password"
-              }
-            />
-          </label>
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="primary wide" disabled={busy}>
-            {busy
-              ? "Checking the gate…"
-              : mode === "sign-in"
-                ? "Sign in"
-                : "Create account"}
-          </button>
-        </form>
-      </section>
-    </div>
-  );
-}
-
 function AdminModal({
   snapshot,
   onClose,
@@ -905,25 +557,17 @@ function AdminModal({
     queueDepth: number;
     costs: unknown[];
     inFlight: string[];
-    reports?: AdminReport[];
-    alerts?: unknown[];
   } | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
   useDismissOnEscape(onClose);
-  const refreshAdmin = () => {
+  useEffect(() => {
     void api.admin().then((payload) =>
       setDetails({
         liveMpp: payload.liveMpp,
         queueDepth: payload.queueDepth,
         costs: payload.costs,
         inFlight: payload.inFlight,
-        reports: payload.reports,
-        alerts: payload.alerts,
       }),
     );
-  };
-  useEffect(() => {
-    refreshAdmin();
   }, []);
   return (
     <div
@@ -1018,87 +662,18 @@ function AdminModal({
             Reset world
           </button>
         </div>
-        {details?.reports?.length || details?.alerts?.length ? (
-          <section className="admin-lists">
-            {details?.alerts?.length ? (
-              <div>
-                <h3>Alerts</h3>
-                <ul>
-                  {details.alerts.slice(0, 6).map((alert) => (
-                    <li key={String((alert as { id?: string }).id)}>
-                      {String((alert as { summary?: string }).summary ?? "")}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {details?.reports?.length ? (
-              <div>
-                <h3>Reports</h3>
-                <ul>
-                  {details.reports.slice(0, 8).map((item) => (
-                    <li key={String(item.id)}>
-                      <span>
-                        {item.status}: {item.reason}
-                      </span>
-                      {item.status === "open" && item.id ? (
-                        <span className="button-row">
-                          <button
-                            className="secondary"
-                            disabled={busyId === item.id}
-                            onClick={() => {
-                              setBusyId(item.id ?? null);
-                              void api
-                                .resolveReport(item.id!)
-                                .then(refreshAdmin)
-                                .finally(() => setBusyId(null));
-                            }}
-                          >
-                            Resolve
-                          </button>
-                          {item.characterId ? (
-                            <button
-                              className="danger"
-                              disabled={busyId === item.id}
-                              onClick={() => {
-                                setBusyId(item.id ?? null);
-                                void api
-                                  .muteCharacter(item.characterId!, true)
-                                  .then(refreshAdmin)
-                                  .finally(() => setBusyId(null));
-                              }}
-                            >
-                              Mute
-                            </button>
-                          ) : null}
-                        </span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
       </section>
     </div>
   );
 }
 
 export function App() {
-  const { snapshot, viewer, connected, refresh } = useWorld();
-  const { user, isPending: authPending } = useAuth();
-  const [modal, setModal] = useState<Modal | "auth">(null);
+  const { snapshot, connected } = useWorld();
+  const [modal, setModal] = useState<Modal>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected =
     snapshot?.characters.find((character) => character.id === selectedId) ??
     null;
-  const ownedIds =
-    viewer?.characterIds ?? (viewer?.characterId ? [viewer.characterId] : []);
-  const ownedCharacters =
-    snapshot?.characters.filter((character) =>
-      ownedIds.includes(character.id),
-    ) ?? [];
   const recentEvents = useMemo(
     () => snapshot?.events.slice(0, PUBLIC_RECORD_LIMIT) ?? [],
     [snapshot],
@@ -1116,25 +691,12 @@ export function App() {
   const [recordOpen, setRecordOpen] = useState(false);
   const select = useCallback((id: string | null) => setSelectedId(id), []);
 
-  const openCreate = () => {
-    if (!user) setModal("auth");
-    else if (ownedCharacters.length >= MAX_CHARACTERS_PER_USER)
-      setSelectedId(ownedCharacters[0]?.id ?? null);
-    else setModal("create");
-  };
-
-  const signOut = async () => {
-    await authClient.signOut();
-    await refresh();
-    setSelectedId(null);
-  };
-
   if (!snapshot)
     return (
       <main className="loading">
         <div className="loading-mark">AW</div>
         <h1>Opening Agent World…</h1>
-        <p>Connecting to the shared world.</p>
+        <p>Connecting to your world.</p>
       </main>
     );
 
@@ -1160,63 +722,43 @@ export function App() {
               <span className="viewer-count-here"> here</span>
             </div>
           </div>
-          {viewer?.isAdmin && (
-            <button
-              className="world-spend"
-              onClick={() => setModal("admin")}
-              aria-label={`World spend ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)} daily budget. Open world administration.`}
-              title={`World spend: ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)}`}
+          <button
+            className="world-spend"
+            onClick={() => setModal("admin")}
+            aria-label={`World spend ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)} daily budget. Open world administration.`}
+            title={`World spend: ${formatUsd(snapshot.serverSpentTodayMicros)} of ${formatUsd(snapshot.serverDailyBudgetMicros)}`}
+          >
+            <span
+              className="world-spend-ring"
+              style={{
+                background: `conic-gradient(#4e9470 ${worldSpendPercent}%, #e1d5bd 0)`,
+              }}
             >
-              <span
-                className="world-spend-ring"
-                style={{
-                  background: `conic-gradient(#4e9470 ${worldSpendPercent}%, #e1d5bd 0)`,
-                }}
-              >
-                <span>$</span>
-              </span>
+              <span>$</span>
+            </span>
+          </button>
+          {snapshot.characters.map((character) => (
+            <button
+              key={character.id}
+              className="owner-chip"
+              onClick={() => setSelectedId(character.id)}
+            >
+              <span style={{ background: character.avatarColor }} />
+              {character.name}
             </button>
-          )}
-          {authPending ? (
-            <span className="auth-label">Checking session…</span>
-          ) : user ? (
-            <>
-              {ownedCharacters.map((character) => (
-                <button
-                  key={character.id}
-                  className="owner-chip"
-                  onClick={() => setSelectedId(character.id)}
-                >
-                  <span style={{ background: character.avatarColor }} />
-                  {character.name}
-                </button>
-              ))}
-              {ownedCharacters.length < MAX_CHARACTERS_PER_USER && (
-                <button className="primary" onClick={openCreate}>
-                  {ownedCharacters.length
-                    ? "Add character"
-                    : "Create a character"}
-                </button>
-              )}
-              <button
-                className="secondary auth-user"
-                onClick={() => void signOut()}
-              >
-                {user.name || user.email} · Sign out
-              </button>
-            </>
-          ) : (
-            <button className="secondary" onClick={() => setModal("auth")}>
-              Sign in
-            </button>
-          )}
+          ))}
+          <button className="primary" onClick={() => setModal("create")}>
+            {snapshot.characters.length
+              ? "Add character"
+              : "Create a character"}
+          </button>
         </div>
       </header>
       <main className="main-grid">
         <section className="world-panel">
           <div className="world-meta">
             <div>
-              <span className="world-dot" /> Shared world
+              <span className="world-dot" /> Local world
             </div>
             <p>
               {snapshot.characters.length
@@ -1238,23 +780,10 @@ export function App() {
               <div className="empty-world-copy">
                 <div className="empty-orb">✦</div>
                 <h2>The world is quiet—for now.</h2>
-                <p>
-                  {snapshot.inviteOnly
-                    ? "Watch the plaza while invites are closed. Operators will open character creation when the world is ready."
-                    : "Be the first character to step into Sunbeam Plaza. Anyone else on this server will see you arrive."}
-                </p>
-                {snapshot.inviteOnly && !user ? (
-                  <button
-                    className="secondary"
-                    onClick={() => setModal("auth")}
-                  >
-                    Sign in
-                  </button>
-                ) : (
-                  <button className="primary" onClick={openCreate}>
-                    Create the first character
-                  </button>
-                )}
+                <p>Be the first character to step into Sunbeam Plaza.</p>
+                <button className="primary" onClick={() => setModal("create")}>
+                  Create the first character
+                </button>
               </div>
             </div>
           )}
@@ -1274,7 +803,6 @@ export function App() {
             <CharacterInspector
               key={selected.id}
               character={selected}
-              ownedCharacterIds={ownedIds}
               onClose={() => setSelectedId(null)}
             />
           )}
@@ -1327,7 +855,7 @@ export function App() {
           {recentEvents.length ? (
             <ol className="event-list">
               {recentEvents.map((item) => {
-                const detail = guestEventDetail(item.detail);
+                const detail = eventDetail(item.detail);
                 const displaySummary = shortenFeedSummary(item.summary);
                 return (
                   <li key={item.id} className={`event ${item.kind}`}>
@@ -1397,24 +925,10 @@ export function App() {
           onClick={() => setRecordOpen(false)}
         />
       )}
-      {modal === "create" && (
-        <CreateModal
-          onClose={() => setModal(null)}
-          onCreated={() => void refresh()}
-        />
-      )}
-      {modal === "auth" && (
-        <AuthModal
-          onClose={() => {
-            setModal(null);
-            void refresh();
-          }}
-        />
-      )}
+      {modal === "create" && <CreateModal onClose={() => setModal(null)} />}
       {modal === "admin" && (
         <AdminModal snapshot={snapshot} onClose={() => setModal(null)} />
       )}
-      <Analytics />
     </div>
   );
 }

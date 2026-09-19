@@ -167,7 +167,7 @@ probabilities }`. Errors: 400, 401, 402 (insufficient credits), 403, 404, 413,
 
 - [x] 0 Preserve and branch (done by the planner)
 - [x] 1 Remove the hosted stack
-- [ ] 2 Decouple the client from hosted (auth, viewer, polling) and add local routes
+- [x] 2 Decouple the client from hosted (auth, viewer, polling) and add local routes
 - [ ] 3 Serve the client from the server; one-command run; smoke test
 - [ ] 4 Config, safe defaults and mode reporting
 - [ ] 5 OpenRouter client (chat for dialogue, memories and LLM decisions)

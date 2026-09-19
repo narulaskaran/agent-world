@@ -1,33 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   PUBLIC_RECORD_LIMIT,
+  eventDetail,
   eventDetailsLabel,
-  guestEventDetail,
   shortDisplayId,
   shortenFeedSummary,
 } from "./public-record";
 
-describe("guestEventDetail", () => {
-  it("omits empty internals and private conversation markers", () => {
-    expect(guestEventDetail(null)).toBeNull();
-    expect(guestEventDetail("")).toBeNull();
-    expect(guestEventDetail("conversation:abc")).toBeNull();
-    expect(guestEventDetail("deterministic directive response")).toBeNull();
-  });
-
-  it("rewrites job/tick jargon into human copy", () => {
-    expect(guestEventDetail("deterministic tick")).toBe("Looked around.");
-    expect(guestEventDetail("deterministic job")).toBe("Looked around.");
-    expect(guestEventDetail("First mission: explore")).toBe("Arrived.");
-    expect(guestEventDetail("First mission: meet")).toBe("Arrived.");
-    expect(guestEventDetail("First mission: meet someone")).toBe("Arrived.");
-  });
-
-  it("keeps guest-facing details", () => {
-    expect(guestEventDetail("Looked around.")).toBe("Looked around.");
-    expect(guestEventDetail("A note about the plaza.")).toBe(
-      "A note about the plaza.",
+describe("eventDetail", () => {
+  it("omits empty details and keeps full event text", () => {
+    expect(eventDetail(null)).toBeNull();
+    expect(eventDetail("")).toBeNull();
+    expect(eventDetail("conversation:abc")).toBe("conversation:abc");
+    expect(eventDetail("deterministic directive response")).toBe(
+      "deterministic directive response",
     );
+    expect(eventDetail("Looked around.")).toBe("Looked around.");
   });
 });
 
