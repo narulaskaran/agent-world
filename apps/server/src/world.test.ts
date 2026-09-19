@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WorldRepository } from "@agent-world/db";
+import type { PaidServices } from "./services.js";
 import { WorldEngine } from "./world.js";
 
 describe("WorldEngine serverless jobs", () => {
@@ -419,6 +420,66 @@ describe("WorldEngine serverless jobs", () => {
     await engine.runDueJobs();
 
     expect(repository.listPublicCharacters()).toHaveLength(10);
+    expect(repository.activeLeases()).toEqual([]);
+  });
+
+  it("schedules the next decision using AGENT_WORLD_DECISION_SCALE", async () => {
+    engine = new WorldEngine(repository, () => {}, undefined, {
+      decisionScale: 30,
+    });
+    await engine.createCharacter({
+      name: "Moss",
+      personality: "Curious about tiny gardens and gentle conversations.",
+      model: "z-ai/glm-5.3-flash",
+      dailyBudgetMicros: 500_000,
+      decisionIntervalSeconds: 60,
+      firstMission: "explore",
+    });
+    const created = repository.getCharacter("Moss")!;
+    expect(created.nextDecisionAt - created.createdAt).toBe(
+      Math.round(4_000 / 30),
+    );
+    repository.sqlite.prepare("DELETE FROM character_queue").run();
+    repository.updateCharacter(created.id, { nextDecisionAt: 0 });
+    const before = Date.now();
+    await engine.runDueJobs();
+    const after = repository.getCharacter("Moss")!.nextDecisionAt;
+    expect(after).toBeGreaterThanOrEqual(before + 2_000);
+    expect(after).toBeLessThan(before + 4_000);
+  });
+
+  it("does not start a second scheduled decision while a lease is held", async () => {
+    let started = 0;
+    let releaseHang!: () => void;
+    const hang = new Promise<void>((resolve) => {
+      releaseHang = resolve;
+    });
+    const services = {
+      decide: async () => {
+        started += 1;
+        await hang;
+        return { value: { action: "idle", intent: "thinking" }, costMicros: 0 };
+      },
+    } as unknown as PaidServices;
+    engine = new WorldEngine(repository, () => {}, services);
+    await engine.createCharacter({
+      name: "Moss",
+      personality: "Curious about tiny gardens and gentle conversations.",
+      model: "z-ai/glm-5.3-flash",
+      dailyBudgetMicros: 500_000,
+      decisionIntervalSeconds: 60,
+      firstMission: "explore",
+    });
+    const moss = repository.getCharacter("Moss")!;
+    repository.sqlite.prepare("DELETE FROM character_queue").run();
+    repository.updateCharacter(moss.id, { nextDecisionAt: 0 });
+    const first = engine.runDueJobs();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await engine.runDueJobs();
+    expect(started).toBe(1);
+    expect(repository.activeLeases()).toEqual([moss.id]);
+    releaseHang();
+    await first;
     expect(repository.activeLeases()).toEqual([]);
   });
 });

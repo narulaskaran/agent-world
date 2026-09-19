@@ -17,7 +17,9 @@ mkdirSync(dirname(databasePath), { recursive: true });
 
 const repository = new WorldRepository(databasePath);
 const services = createServices(repository, config);
-const runtime = new LocalRuntime(repository, services);
+const runtime = new LocalRuntime(repository, services, {
+  decisionScale: config.decisionScale,
+});
 const app = await createApp({ runtime, config });
 
 runtime.start();

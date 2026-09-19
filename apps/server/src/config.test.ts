@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeMode, loadConfig } from "./config.js";
+import { decisionDelayMs, describeMode, loadConfig } from "./config.js";
 
 const KEY = "sk-test-not-real";
 
@@ -82,5 +82,21 @@ describe("describeMode", () => {
       describeMode(loadConfig({ AGENT_WORLD_LIVE_MPP: "true" })).paidTools,
     ).toBe(true);
     expect(describeMode(loadConfig({})).paidTools).toBe(false);
+  });
+});
+
+describe("decisionDelayMs", () => {
+  it("divides the character interval by the scale", () => {
+    expect(decisionDelayMs(60, 1)).toBe(60_000);
+    expect(decisionDelayMs(60, 30)).toBe(2_000);
+    expect(decisionDelayMs(60, 0.5)).toBe(120_000);
+    expect(decisionDelayMs(4, 1)).toBe(4_000);
+  });
+
+  it("clamps invalid scales to 1 and never returns 0", () => {
+    expect(decisionDelayMs(60, 0)).toBe(60_000);
+    expect(decisionDelayMs(60, 99)).toBe(60_000);
+    expect(decisionDelayMs(60, Number.NaN)).toBe(60_000);
+    expect(decisionDelayMs(0.001, 60)).toBe(1);
   });
 });

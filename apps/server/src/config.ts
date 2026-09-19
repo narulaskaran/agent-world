@@ -55,6 +55,16 @@ const parseScale = (
   return { scale, invalid: false };
 };
 
+export function decisionDelayMs(
+  intervalSeconds: number,
+  scale: number,
+): number {
+  const safe =
+    Number.isFinite(scale) && scale >= 0.1 && scale <= 60 ? scale : 1;
+  const seconds = Number.isFinite(intervalSeconds) ? intervalSeconds : 60;
+  return Math.max(1, Math.round((seconds * 1_000) / safe));
+}
+
 const parseBudget = (value: string | undefined): number => {
   const budget = Number(value ?? DEFAULT_SERVER_DAILY_BUDGET_MICROS);
   return Number.isFinite(budget) && budget >= 0

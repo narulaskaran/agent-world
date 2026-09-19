@@ -19,8 +19,14 @@ export class LocalRuntime {
   constructor(
     readonly repository: WorldRepository,
     services?: PaidServices,
+    options: { decisionScale?: number } = {},
   ) {
-    this.engine = new WorldEngine(repository, () => this.publish(), services);
+    this.engine = new WorldEngine(
+      repository,
+      () => this.publish(),
+      services,
+      options,
+    );
   }
 
   start(): void {

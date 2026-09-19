@@ -18,6 +18,7 @@ import {
   type AgentContext,
   type AgentDecision,
 } from "./services.js";
+import { decisionDelayMs } from "./config.js";
 
 const MOVE_SPEED_PER_SECOND = 92;
 const CONVERSATION_DISTANCE = 78;
@@ -57,13 +58,16 @@ const event = (input: Omit<WorldEvent, "id" | "createdAt">): WorldEvent => ({
 
 export class WorldEngine {
   private readonly services: PaidServices;
+  private readonly decisionScale: number;
 
   constructor(
     readonly repository: WorldStore,
     private readonly changed: () => void = () => {},
     services?: PaidServices,
+    options: { decisionScale?: number } = {},
   ) {
     this.services = services ?? new PaidServices(repository);
+    this.decisionScale = options.decisionScale ?? 1;
     this.recoverOffMapCharacters();
   }
 
@@ -172,7 +176,7 @@ export class WorldEngine {
       spentTodayMicros: 0,
       budgetDate: this.repository.getWorldState().budgetDate,
       decisionIntervalSeconds: input.decisionIntervalSeconds,
-      nextDecisionAt: now + 4_000,
+      nextDecisionAt: now + decisionDelayMs(4, this.decisionScale),
       lastReactionAt: 0,
       state: input.firstMission === "meet" ? "waiting" : "active",
       x,
@@ -566,7 +570,9 @@ export class WorldEngine {
       const latest = this.repository.getCharacter(characterId);
       if (latest)
         this.repository.updateCharacter(characterId, {
-          nextDecisionAt: Date.now() + latest.decisionIntervalSeconds * 1_000,
+          nextDecisionAt:
+            Date.now() +
+            decisionDelayMs(latest.decisionIntervalSeconds, this.decisionScale),
         });
       this.changed();
     }
@@ -645,7 +651,11 @@ export class WorldEngine {
       this.repository.updateCharacter(characterId, {
         lastReactionAt: Date.now(),
         nextDecisionAt:
-          Date.now() + (latest?.decisionIntervalSeconds ?? 60) * 1_000,
+          Date.now() +
+          decisionDelayMs(
+            latest?.decisionIntervalSeconds ?? 60,
+            this.decisionScale,
+          ),
       });
     } catch (error) {
       this.repository.completeQueueItem(item.id);
