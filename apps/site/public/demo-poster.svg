@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-label="Hex-tile map placeholder">
+  <rect width="960" height="540" fill="#f4eddb"/>
+  <g fill="#7eab67" stroke="#5f8a4e" stroke-width="2">
+    <polygon points="480,90 560,135 560,225 480,270 400,225 400,135"/>
+    <polygon points="320,180 400,225 400,315 320,360 240,315 240,225"/>
+    <polygon points="640,180 720,225 720,315 640,360 560,315 560,225"/>
+    <polygon points="400,270 480,315 480,405 400,450 320,405 320,315"/>
+    <polygon points="560,270 640,315 640,405 560,450 480,405 480,315"/>
+  </g>
+  <polygon points="480,180 560,225 560,315 480,360 400,315 400,225" fill="#e6d6a4" stroke="#c9b57d" stroke-width="2"/>
+  <circle cx="460" cy="250" r="14" fill="#579c87"/>
+  <circle cx="520" cy="290" r="14" fill="#c27c54"/>
+  <circle cx="350" cy="270" r="14" fill="#6b7bb3"/>
+  <circle cx="630" cy="250" r="14" fill="#d4a017"/>
+</svg>

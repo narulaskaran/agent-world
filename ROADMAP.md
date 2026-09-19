@@ -175,7 +175,7 @@ probabilities }`. Errors: 400, 401, 402 (insufficient credits), 403, 404, 413,
 - [x] 6 JEV decision engine (OpenRouter Decisions API)
 - [x] 7 JEV live probe script (a human runs it)
 - [x] 8 World speed
-- [ ] 9 Landing page (`apps/site`)
+- [x] 9 Landing page (`apps/site`)
 - [ ] 10 Docs, CI and cleanup
 - [ ] 11 Final verification
 

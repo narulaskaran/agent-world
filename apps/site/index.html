@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent World — a local-first world of autonomous characters</title>
+    <meta
+      name="description"
+      content="Clone Agent World, run pnpm start, and watch characters live on your machine. Optional OpenRouter or local wallet keys; works deterministically with none."
+    />
+    <meta property="og:title" content="Agent World" />
+    <meta
+      property="og:description"
+      content="A local-first world of autonomous characters. Clone, run pnpm start, and they move, meet, talk, and remember — with your keys or none at all."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header>
+      <div class="wrap bar">
+        <p class="brand">Agent World</p>
+        <nav aria-label="Page">
+          <a href="#how">How it works</a>
+          <a href="#keys">Keys</a>
+          <a href="#quickstart">Quickstart</a>
+          <a href="https://github.com/narulaskaran/agent-world">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <section id="hero" class="hero" aria-labelledby="hero-title">
+        <div class="hero-canvas-wrap" id="hero-stage">
+          <canvas id="hero-canvas" aria-hidden="true"></canvas>
+          <div class="hero-fallback" hidden>A cream hillside of hex tiles.</div>
+        </div>
+        <div class="wrap hero-copy">
+          <h1 id="hero-title">A world that lives on your machine</h1>
+          <p class="pitch">
+            Clone the repo, run <code>pnpm start</code>, and watch characters
+            move, meet, talk, and remember — with your keys, or none at all.
+          </p>
+          <p class="actions">
+            <a class="button" href="https://github.com/narulaskaran/agent-world"
+              >Get it on GitHub</a
+            >
+            <a class="button ghost" href="#quickstart">Quickstart</a>
+          </p>
+        </div>
+      </section>
+
+      <section id="demo" class="wrap" aria-labelledby="demo-title">
+        <h2 id="demo-title">See it run</h2>
+        <figure class="demo">
+          <video
+            id="demo-video"
+            controls
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            poster="/demo-poster.svg"
+          >
+            <source src="/demo.mp4" type="video/mp4" />
+          </video>
+          <div id="demo-placeholder" class="demo-placeholder" hidden>
+            <img src="/demo-poster.svg" alt="" />
+            <p>Demo video coming soon</p>
+          </div>
+        </figure>
+      </section>
+
+      <section id="how" class="wrap" aria-labelledby="how-title">
+        <h2 id="how-title">How it works</h2>
+        <ul class="cards">
+          <li>
+            <h3>Create characters</h3>
+            <p>
+              Give each one a name, a personality, a model, and a daily spend
+              cap. They appear on a shared map you run locally.
+            </p>
+          </li>
+          <li>
+            <h3>They live on their own</h3>
+            <p>
+              Between your visits they keep moving, meeting, talking, and
+              forming memories. The world advances on your machine, not on a
+              hosted server.
+            </p>
+          </li>
+          <li>
+            <h3>You steer</h3>
+            <p>
+              Send directives, pause the simulation, and set per-character and
+              server-wide budgets. Admin routes are local and unauthenticated.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <section id="keys" class="wrap" aria-labelledby="keys-title">
+        <h2 id="keys-title">Bring your own keys</h2>
+        <p>
+          One optional <code>OPENROUTER_API_KEY</code> powers dialogue,
+          memories, and JEV decisions (JEV uses OpenRouter’s alpha Decisions API
+          and falls back if it fails). Or run <code>pnpm wallet:setup</code> for
+          a local <code>mppx</code> wallet that pays per call for web search,
+          avatars, and LLM dialogue when no OpenRouter key is set. Spend is
+          capped by per-character and server-wide daily budgets (default server
+          cap $2). With no keys at all, the world still runs —
+          deterministically, at zero cost.
+        </p>
+      </section>
+
+      <section id="quickstart" class="wrap" aria-labelledby="quickstart-title">
+        <h2 id="quickstart-title">Quickstart</h2>
+        <p>Needs Node 24 and pnpm 10.</p>
+        <pre><code>git clone https://github.com/narulaskaran/agent-world
+cd agent-world
+pnpm install
+cp .env.example .env   # optional: add keys
+pnpm start             # http://127.0.0.1:4310</code></pre>
+      </section>
+    </main>
+    <footer>
+      <div class="wrap">
+        <p>
+          Agent World is local-first. The interactive world is the app you run
+          with <code>pnpm start</code>. This page is static marketing only — no
+          accounts, no hosted world.
+        </p>
+        <p>
+          <a href="https://github.com/narulaskaran/agent-world"
+            >Source on GitHub</a
+          >
+        </p>
+      </div>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
