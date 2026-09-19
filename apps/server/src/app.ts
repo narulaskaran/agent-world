@@ -12,8 +12,7 @@ import {
   UpdateWorldSchema,
 } from "@agent-world/shared";
 import type { LocalRuntime } from "./local-runtime.js";
-
-export const DEFAULT_WEB_ORIGIN = "http://localhost:4311";
+import { describeMode, loadConfig, type WorldConfig } from "./config.js";
 
 export function defaultWebDist(): string {
   return fileURLToPath(new URL("../../web/dist", import.meta.url));
@@ -24,21 +23,20 @@ export interface CreateAppOptions {
   logger?: boolean | { level: string };
   corsOrigin?: string | string[] | boolean;
   webDist?: string;
+  config?: WorldConfig;
 }
 
 export async function createApp(
   options: CreateAppOptions,
 ): Promise<FastifyInstance> {
   const { runtime } = options;
+  const config = options.config ?? loadConfig();
   const app = Fastify({
-    logger: options.logger ?? { level: process.env.LOG_LEVEL ?? "info" },
+    logger: options.logger ?? { level: config.logLevel },
   });
 
   await app.register(cors, {
-    origin:
-      options.corsOrigin ??
-      process.env.AGENT_WORLD_WEB_ORIGIN?.split(",") ??
-      DEFAULT_WEB_ORIGIN,
+    origin: options.corsOrigin ?? config.webOrigin,
     methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   });
@@ -46,7 +44,8 @@ export async function createApp(
 
   app.get("/health", async () => ({
     ok: true,
-    liveMpp: process.env.AGENT_WORLD_LIVE_MPP === "true",
+    liveMpp: config.liveMpp,
+    mode: describeMode(config),
   }));
   app.get("/api/state", async () => runtime.snapshot());
 

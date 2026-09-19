@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WorldRepository } from "@agent-world/db";
 import { createApp } from "./app.js";
+import { loadConfig } from "./config.js";
 import { LocalRuntime } from "./local-runtime.js";
 
 const VALID_CHARACTER = {
@@ -31,7 +32,11 @@ describe("createApp", () => {
   it("reports health", async () => {
     const response = await app.inject({ method: "GET", url: "/health" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ ok: true, liveMpp: false });
+    expect(response.json()).toMatchObject({
+      ok: true,
+      liveMpp: false,
+      mode: { decisions: "deterministic" },
+    });
   });
 
   it("creates a character that appears in /api/state", async () => {
@@ -98,5 +103,34 @@ describe("createApp", () => {
       payload: VALID_CHARACTER,
     });
     expect(second.statusCode).toBe(409);
+  });
+});
+
+describe("GET /health key hygiene", () => {
+  it("never contains configured key strings", async () => {
+    const secret = "sk-test-not-real";
+    const repository = new WorldRepository(":memory:");
+    const runtime = new LocalRuntime(repository);
+    const app = await createApp({
+      runtime,
+      logger: false,
+      config: loadConfig({
+        OPENROUTER_API_KEY: secret,
+        AGENT_WORLD_LIVE_MPP: "false",
+      }),
+    });
+    try {
+      const response = await app.inject({ method: "GET", url: "/health" });
+      expect(response.statusCode).toBe(200);
+      const serialized = JSON.stringify(response.json());
+      expect(serialized).not.toContain(secret);
+      expect(serialized).not.toContain("OPENROUTER_API_KEY");
+      expect(response.json()).toMatchObject({
+        ok: true,
+        mode: { decisions: "jev" },
+      });
+    } finally {
+      await app.close();
+    }
   });
 });
