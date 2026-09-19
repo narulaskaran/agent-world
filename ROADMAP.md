@@ -170,7 +170,7 @@ probabilities }`. Errors: 400, 401, 402 (insufficient credits), 403, 404, 413,
 - [x] 2 Decouple the client from hosted (auth, viewer, polling) and add local routes
 - [x] 3 Serve the client from the server; one-command run; smoke test
 - [x] 4 Config, safe defaults and mode reporting
-- [ ] 5 OpenRouter client (chat for dialogue, memories and LLM decisions)
+- [x] 5 OpenRouter client (chat for dialogue, memories and LLM decisions)
 - [ ] 5b Local wallet setup (`mppx` dependency and `pnpm wallet:setup`)
 - [ ] 6 JEV decision engine (OpenRouter Decisions API)
 - [ ] 7 JEV live probe script (a human runs it)

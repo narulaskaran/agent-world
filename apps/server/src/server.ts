@@ -4,6 +4,7 @@ import { WorldRepository } from "@agent-world/db";
 import { createApp } from "./app.js";
 import { describeMode, loadConfig } from "./config.js";
 import { LocalRuntime } from "./local-runtime.js";
+import { createServices } from "./services.js";
 
 const config = loadConfig();
 if (config.decisionScaleInvalid) {
@@ -15,7 +16,8 @@ const databasePath = resolve(config.database);
 mkdirSync(dirname(databasePath), { recursive: true });
 
 const repository = new WorldRepository(databasePath);
-const runtime = new LocalRuntime(repository);
+const services = createServices(repository, config);
+const runtime = new LocalRuntime(repository, services);
 const app = await createApp({ runtime, config });
 
 runtime.start();

@@ -7,6 +7,7 @@ import type {
   WorldSnapshot,
 } from "@agent-world/shared";
 import type { WorldRepository } from "@agent-world/db";
+import type { PaidServices } from "./services.js";
 import { WorldEngine } from "./world.js";
 
 export class LocalRuntime {
@@ -15,8 +16,11 @@ export class LocalRuntime {
   private timers: NodeJS.Timeout[] = [];
   private viewers = 0;
 
-  constructor(readonly repository: WorldRepository) {
-    this.engine = new WorldEngine(repository, () => this.publish());
+  constructor(
+    readonly repository: WorldRepository,
+    services?: PaidServices,
+  ) {
+    this.engine = new WorldEngine(repository, () => this.publish(), services);
   }
 
   start(): void {
