@@ -860,5 +860,5 @@ export class WorldRepository {
   }
 }
 
-/** Persistence port used by the domain engine. A Neon adapter implements this contract without SQLite. */
+/** Persistence port used by the domain engine. */
 export type WorldStore = Omit<WorldRepository, "sqlite" | "db" | "close">;

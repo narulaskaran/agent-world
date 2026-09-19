@@ -176,7 +176,7 @@ probabilities }`. Errors: 400, 401, 402 (insufficient credits), 403, 404, 413,
 - [x] 7 JEV live probe script (a human runs it)
 - [x] 8 World speed
 - [x] 9 Landing page (`apps/site`)
-- [ ] 10 Docs, CI and cleanup
+- [x] 10 Docs, CI and cleanup
 - [ ] 11 Final verification
 
 ## Steps

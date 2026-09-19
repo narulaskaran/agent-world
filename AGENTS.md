@@ -2,48 +2,40 @@
 
 ## Layout
 
-- `apps/web`: Vite + React + Three.js client. Same-origin `/api` in production.
+- `apps/site`: static marketing page (Vite + Three.js, no backend).
+- `apps/web`: Vite + React + Three.js client. Talks to the local API and `/ws`.
 - `apps/server`: local Fastify + WebSocket runtime (`LocalRuntime` + `WorldEngine`).
 - `packages/shared`: Zod contracts, locations, waypoints, hashing helpers.
 - `packages/db`: SQLite `WorldStore` used by the local server and its tests.
-- `packages/hosted`: hosted HTTP handler, job runner, MemoryStore tests, NeonStore.
-- `api/index.ts`: Vercel Function entry that re-exports `createProductionHandler()`.
-- `db/migrations`: checked-in Postgres SQL. `0002_hosted.sql` and
-  `0004_world_tick.sql` (`world_state.last_tick_at`) are also applied at runtime
-  by `NeonStore.ensureSchema()` on mutations and `/api/jobs/run` (once per
-  process). Spectator `GET /api/state` does not run schema DDL. Wallet/payment
-  DDL from `0003_wallet_payment.sql` is best-effort via `ensureWalletSchema()` on
-  wallet routes only and must not run on spectator `/state`.
-- `.github/workflows/check.yml`: `pnpm check` plus optional live Neon claims.
 
-## Hosted behavior
+## Local-first behaviour
 
-- Public reads; mutations require a Neon Auth session cookie.
-- Ownership is the auth user id. Users may have up to five characters.
-- Conversation _lines_ are private to participants; the fact that people met stays public.
-- Deterministic jobs live in `character_queue`. Claims use `FOR UPDATE SKIP LOCKED`.
-- Stale `processing` rows are returned to `pending` when their lease (`not_before`) expires.
-- Hobby cron is daily (`/api/jobs/run`). Mutations drain immediately. Spectator
-  `GET /api/state` is read-only: no presence write, due-job checks, autonomy
-  drain, or schema DDL. The poll payload is a slim board snapshot (id, pose,
-  speech, and map pick/render fields). Personality, memories, and relationships
-  lazy-load from `GET /api/characters/:id` for the selected inspector. Clients
-  poll with ETag/If-None-Match (~4s foreground, pause when hidden, exponential
-  backoff on 5xx). Upstash QStash repeats an authenticated
-  `GET /api/jobs/run` unattended every 10 minutes (`Authorization: Bearer $CRON_SECRET`);
-  see `HANDOFF.md`. World tick spacing is env-only
-  `AGENT_WORLD_TICK_INTERVAL_MIN` ∈ {10, 30, 60} (default 10). Invalid values
-  fail closed to 10 with a warning log. QStash may still fire every 10 minutes;
-  `/api/jobs/run` skips autonomy drain when the last successful tick is inside
-  that interval. Spectator poll cadence is unchanged and still does not
-  advance the world. No owner/admin UI for v1.
-- `AGENT_WORLD_INVITE_ONLY=true` plus `AGENT_WORLD_INVITE_USER_IDS` can close
-  character creation without disabling public observation.
-- Do not enable OpenRouter, Privy, or Stripe in this codebase until those milestones.
+- Clone, `pnpm start`, open `http://127.0.0.1:4310`. No accounts or sessions.
+- Persistence is SQLite. The server binds `127.0.0.1` by default.
+  Admin routes are unauthenticated; do not expose the port.
+- The client uses `/ws` snapshots. No polling.
+- Keys are environment variables only (`.env`, gitignored).
+
+## Decision precedence
+
+Scheduled decisions: JEV (if `OPENROUTER_API_KEY` and
+`AGENT_WORLD_JEV_DECISIONS` is not `false`) → OpenRouter LLM (if key) →
+deterministic. Directives and events skip JEV: OpenRouter LLM (if key) →
+deterministic. JEV never writes free text.
+
+Dialogue and memories use OpenRouter if the key is set, else MPP if
+`AGENT_WORLD_LIVE_MPP=true`, else deterministic lines. Web search and avatars
+stay MPP-only and off by default.
 
 ## Commands
 
 ```bash
 pnpm install
 pnpm check
+pnpm start
+pnpm dev
+pnpm smoke
 ```
+
+Optional: `pnpm wallet:setup`, `pnpm jev:probe --dry-run` (a human runs the
+live probe with a real key).

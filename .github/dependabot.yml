@@ -7,10 +7,9 @@ updates:
     open-pull-requests-limit: 5
 
     groups:
-      neon-and-drizzle:
+      drizzle:
         patterns:
           - drizzle-orm
-          - "@neondatabase/*"
 
       testing:
         patterns:
@@ -24,4 +23,3 @@ updates:
           - react
           - react-dom
           - "@types/react*"
-
