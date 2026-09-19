@@ -11,9 +11,10 @@
     "start": "pnpm --filter @agent-world/web build && pnpm --filter @agent-world/server start",
     "smoke": "node scripts/smoke.mjs",
     "wallet:setup": "node scripts/wallet-setup.mjs",
+    "jev:probe": "node scripts/jev-probe.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test && node --test scripts/lib/wallet-setup.test.mjs",
+    "test": "pnpm -r test && node --test scripts/lib/wallet-setup.test.mjs scripts/lib/jev-probe.test.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
