@@ -105,25 +105,6 @@ importers:
         specifier: ^5.0.0
         version: 5.0.1(@types/node@24.13.3)(vite@8.3.0(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13))
 
-  packages/hosted:
-    dependencies:
-      '@agent-world/shared':
-        specifier: workspace:*
-        version: link:../shared
-      '@neondatabase/serverless':
-        specifier: ^1.1.0
-        version: 1.1.0
-    devDependencies:
-      '@types/node':
-        specifier: ^24.3.0
-        version: 24.13.3
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^5.0.0
-        version: 5.0.1(@types/node@24.13.3)(vite@8.3.0(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13))
-
   packages/shared:
     dependencies:
       zod:
@@ -3375,7 +3356,8 @@ snapshots:
     dependencies:
       '@supabase/postgrest-js': 2.79.0
 
-  '@neondatabase/serverless@1.1.0': {}
+  '@neondatabase/serverless@1.1.0':
+    optional: true
 
   '@noble/ciphers@2.4.0': {}
 
