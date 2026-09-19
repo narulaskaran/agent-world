@@ -1,5 +1,9 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import {
   CreateCharacterSchema,
@@ -9,10 +13,17 @@ import {
 } from "@agent-world/shared";
 import type { LocalRuntime } from "./local-runtime.js";
 
+export const DEFAULT_WEB_ORIGIN = "http://localhost:4311";
+
+export function defaultWebDist(): string {
+  return fileURLToPath(new URL("../../web/dist", import.meta.url));
+}
+
 export interface CreateAppOptions {
   runtime: LocalRuntime;
   logger?: boolean | { level: string };
   corsOrigin?: string | string[] | boolean;
+  webDist?: string;
 }
 
 export async function createApp(
@@ -27,7 +38,7 @@ export async function createApp(
     origin:
       options.corsOrigin ??
       process.env.AGENT_WORLD_WEB_ORIGIN?.split(",") ??
-      true,
+      DEFAULT_WEB_ORIGIN,
     methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   });
@@ -52,20 +63,16 @@ export async function createApp(
   app.post("/api/characters", async (request, reply) => {
     const parsed = CreateCharacterSchema.safeParse(request.body);
     if (!parsed.success)
-      return reply
-        .code(400)
-        .send({
-          error: parsed.error.issues[0]?.message ?? "Invalid character",
-        });
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? "Invalid character",
+      });
     try {
       const character = await runtime.createCharacter(parsed.data);
       return reply.code(201).send(character);
     } catch (error) {
-      return reply
-        .code(409)
-        .send({
-          error: error instanceof Error ? error.message : String(error),
-        });
+      return reply.code(409).send({
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
@@ -165,6 +172,32 @@ export async function createApp(
       unsubscribe();
     });
   });
+
+  const webDist = options.webDist ?? defaultWebDist();
+  if (existsSync(join(webDist, "index.html"))) {
+    await app.register(fastifyStatic, {
+      root: webDist,
+      wildcard: false,
+    });
+    app.setNotFoundHandler((request, reply) => {
+      const path = (request.url.split("?")[0] ?? request.url) || "/";
+      if (
+        request.method === "GET" &&
+        !path.startsWith("/api") &&
+        path !== "/ws" &&
+        path !== "/health"
+      ) {
+        return reply.sendFile("index.html");
+      }
+      return reply.code(404).send({ error: "Not found" });
+    });
+  } else {
+    app.get("/", async (_request, reply) =>
+      reply
+        .type("text/plain")
+        .send("Client not built. Run pnpm start from the repo root."),
+    );
+  }
 
   app.addHook("onClose", async () => {
     runtime.stop();
