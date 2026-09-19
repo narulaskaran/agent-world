@@ -10,9 +10,10 @@
     "dev": "concurrently -n server,web -c cyan,magenta \"pnpm --filter @agent-world/server dev\" \"pnpm --filter @agent-world/web dev\"",
     "start": "pnpm --filter @agent-world/web build && pnpm --filter @agent-world/server start",
     "smoke": "node scripts/smoke.mjs",
+    "wallet:setup": "node scripts/wallet-setup.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && node --test scripts/lib/wallet-setup.test.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

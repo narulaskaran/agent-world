@@ -27,6 +27,11 @@ app.log.info(
   { mode: describeMode(config), url: listenUrl },
   "Agent World listening",
 );
+if (!config.liveMpp && !config.hasOpenRouterKey) {
+  app.log.info(
+    "Paid tools are off. Run pnpm wallet:setup to enable a local mppx wallet, or set OPENROUTER_API_KEY.",
+  );
+}
 if (config.decisionScale > 1 && (config.hasOpenRouterKey || config.liveMpp)) {
   app.log.warn(
     "Decision scale is above 1; spend scales with speed. Cap it with AGENT_WORLD_GLOBAL_DAILY_BUDGET_MICROS.",

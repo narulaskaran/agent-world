@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const TEMPO_MAINNET_CHAIN_ID = 4217;
 const TEMPO_USDC = "0x20c000000000000000000000b9537d11c60e8b50";
@@ -79,6 +81,31 @@ export function selectChargeChallenge(
     );
   }
   return selected;
+}
+
+export function bundledMppxPaths(fromUrl = import.meta.url): string[] {
+  return [
+    fileURLToPath(new URL("../node_modules/.bin/mppx", fromUrl)),
+    fileURLToPath(new URL("../../node_modules/.bin/mppx", fromUrl)),
+  ];
+}
+
+export function resolveMppxBinary(
+  options: {
+    binary?: string;
+    env?: NodeJS.ProcessEnv;
+    exists?: (path: string) => boolean;
+    bundledPaths?: string[];
+  } = {},
+): string {
+  if (options.binary) return options.binary;
+  const env = options.env ?? process.env;
+  if (env.MPPX_BIN?.trim()) return env.MPPX_BIN.trim();
+  const exists = options.exists ?? existsSync;
+  for (const candidate of options.bundledPaths ?? bundledMppxPaths()) {
+    if (exists(candidate)) return candidate;
+  }
+  return "mppx";
 }
 
 function signWithCli(
@@ -166,7 +193,7 @@ export class MppxRequester {
     const authorization = this.options.sign
       ? await this.options.sign(selected.value)
       : await signWithCli(
-          this.options.binary ?? process.env.MPPX_BIN ?? "mppx",
+          resolveMppxBinary({ binary: this.options.binary }),
           this.options.account ?? process.env.MPPX_ACCOUNT ?? "agent-world",
           selected.value,
         );

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MppxRequester,
   PaidMppRequestError,
+  resolveMppxBinary,
   selectChargeChallenge,
 } from "./mppx.js";
 
@@ -16,6 +17,42 @@ const challenge = (amount: number) => {
   ).toString("base64url");
   return `Payment id="charge-1", realm="example.test", method="tempo", intent="charge", request="${request}"`;
 };
+
+describe("resolveMppxBinary", () => {
+  it("prefers option, then env, then bundled path, then the bare name", () => {
+    const bundled = "/tmp/bundled/mppx";
+    const exists = (path: string) => path === bundled;
+    expect(
+      resolveMppxBinary({
+        binary: "/opt/custom-mppx",
+        env: { MPPX_BIN: "/env/mppx" },
+        exists,
+        bundledPaths: [bundled],
+      }),
+    ).toBe("/opt/custom-mppx");
+    expect(
+      resolveMppxBinary({
+        env: { MPPX_BIN: "/env/mppx" },
+        exists,
+        bundledPaths: [bundled],
+      }),
+    ).toBe("/env/mppx");
+    expect(
+      resolveMppxBinary({
+        env: {},
+        exists,
+        bundledPaths: [bundled],
+      }),
+    ).toBe(bundled);
+    expect(
+      resolveMppxBinary({
+        env: {},
+        exists: () => false,
+        bundledPaths: [bundled],
+      }),
+    ).toBe("mppx");
+  });
+});
 
 describe("MppxRequester", () => {
   it("selects a supported charge only inside the reserved request budget", () => {
