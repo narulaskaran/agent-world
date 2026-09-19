@@ -529,12 +529,18 @@ export class WorldEngine {
           name: item.name,
           distance: distance(self, item),
           state: item.state,
+          locationId: item.locationId ?? null,
         }))
         .sort((a, b) => a.distance - b.distance),
       memories: (self.memories ?? []).slice(0, 12).map((memory) => ({
         kind: memory.kind,
         bullet: memory.bullet,
         subject: memory.subject,
+      })),
+      relationships: (self.relationships ?? []).map((item) => ({
+        name: item.characterName,
+        impression: item.impression,
+        affinity: item.affinity,
       })),
       recentEvents: relevantEvents,
       capabilities: [

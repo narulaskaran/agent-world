@@ -107,6 +107,7 @@ describe("PaidServices OpenRouter LLM path", () => {
     memories: [],
     recentEvents: [],
     capabilities: [],
+    directive: "look around",
   };
 
   it("returns the model message and settles the parsed cost", async () => {

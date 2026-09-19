@@ -172,7 +172,7 @@ probabilities }`. Errors: 400, 401, 402 (insufficient credits), 403, 404, 413,
 - [x] 4 Config, safe defaults and mode reporting
 - [x] 5 OpenRouter client (chat for dialogue, memories and LLM decisions)
 - [x] 5b Local wallet setup (`mppx` dependency and `pnpm wallet:setup`)
-- [ ] 6 JEV decision engine (OpenRouter Decisions API)
+- [x] 6 JEV decision engine (OpenRouter Decisions API)
 - [ ] 7 JEV live probe script (a human runs it)
 - [ ] 8 World speed
 - [ ] 9 Landing page (`apps/site`)
