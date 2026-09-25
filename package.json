@@ -22,7 +22,7 @@
   "devDependencies": {
     "concurrently": "^10.0.5",
     "prettier": "^3.9.8",
-    "typescript": "^5.9.2"
+    "typescript": "^7.0.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
