@@ -6,7 +6,7 @@
     <title>Agent World — a local-first world of autonomous characters</title>
     <meta
       name="description"
-      content="Clone Agent World, run pnpm start, and watch characters live on your machine. Optional OpenRouter or local wallet keys; works deterministically with none."
+      content="Clone Agent World, run pnpm start, and watch characters live on your machine. Optional OpenRouter or local wallet keys; runs free on a built-in brain with none."
     />
     <meta property="og:title" content="Agent World" />
     <meta
@@ -14,6 +14,15 @@
       content="A local-first world of autonomous characters. Clone, run pnpm start, and they move, meet, talk, and remember — with your keys or none at all."
     />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The Agent World app: characters talking on a hex-tile map beside a live activity feed."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -52,23 +61,36 @@
 
       <section id="demo" class="wrap" aria-labelledby="demo-title">
         <h2 id="demo-title">See it run</h2>
-        <figure class="demo">
-          <video
-            id="demo-video"
-            controls
-            muted
-            loop
-            playsinline
-            preload="metadata"
-            poster="/demo-poster.svg"
-          >
-            <source src="/demo.mp4" type="video/mp4" />
-          </video>
-          <div id="demo-placeholder" class="demo-placeholder" hidden>
-            <img src="/demo-poster.svg" alt="" />
-            <p>Demo video coming soon</p>
-          </div>
-        </figure>
+        <div class="shots">
+          <figure class="shot">
+            <img
+              src="/screens/world.webp"
+              width="1280"
+              height="800"
+              loading="lazy"
+              alt="Three characters chatting at Sunbeam Plaza on a hex-tile map, with an activity feed of conversations, memories and things left at the Tinker Shed."
+            />
+            <figcaption>
+              Characters wander between five places, strike up conversations and
+              leave things at the Tinker Shed. The feed threads every
+              conversation as it happens.
+            </figcaption>
+          </figure>
+          <figure class="shot">
+            <img
+              src="/screens/inspector.webp"
+              width="1280"
+              height="800"
+              loading="lazy"
+              alt="The inspector for a character named Juniper, showing what she is doing, her personality and her friendships with Moss and Tinker."
+            />
+            <figcaption>
+              Click anyone to follow them. The inspector shows what they are
+              thinking, who they know and what they remember, and lets you nudge
+              them with a directive.
+            </figcaption>
+          </figure>
+        </div>
       </section>
 
       <section id="how" class="wrap" aria-labelledby="how-title">
@@ -77,8 +99,9 @@
           <li>
             <h3>Create characters</h3>
             <p>
-              Give each one a name, a personality, a model, and a daily spend
-              cap. They appear on a shared map you run locally.
+              Give each one a name and a personality, or start with a ready-made
+              cast. With an OpenRouter key you also pick a model and a daily
+              spend cap.
             </p>
           </li>
           <li>
@@ -92,8 +115,9 @@
           <li>
             <h3>You steer</h3>
             <p>
-              Send directives, pause the simulation, and set per-character and
-              server-wide budgets. Admin routes are local and unauthenticated.
+              Send directives, change the world speed, pause the simulation, and
+              set per-character and server-wide budgets. The server only listens
+              on your machine.
             </p>
           </li>
         </ul>
@@ -108,8 +132,8 @@
           a local <code>mppx</code> wallet that pays per call for web search,
           avatars, and LLM dialogue when no OpenRouter key is set. Spend is
           capped by per-character and server-wide daily budgets (default server
-          cap $2). With no keys at all, the world still runs —
-          deterministically, at zero cost.
+          cap $2). With no keys at all, characters run on a built-in keyless
+          brain — free, offline, and still chatty.
         </p>
       </section>
 

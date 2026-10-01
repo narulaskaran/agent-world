@@ -191,6 +191,7 @@ describe("mapJevDecision", () => {
       action: "approach",
       targetCharacterId: "juniper",
       intent: "Ask Juniper what they have noticed around Sunbeam Plaza",
+      message: expect.stringContaining("Juniper"),
     });
     expect(
       mapJevDecision(
@@ -203,7 +204,7 @@ describe("mapJevDecision", () => {
     ).toEqual({
       action: "move",
       locationId: "library",
-      intent: "Exploring The Memory Stack",
+      intent: "Exploring the Memory Stack",
     });
     expect(
       mapJevDecision(
@@ -271,6 +272,7 @@ describe("PaidServices JEV decisions", () => {
       action: "approach",
       targetCharacterId: "juniper",
       intent: "Ask Juniper what they have noticed around Sunbeam Plaza",
+      message: expect.stringContaining("Juniper"),
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(OPENROUTER_DECISIONS_URL);
@@ -315,7 +317,7 @@ describe("PaidServices JEV decisions", () => {
         {
           action: "move",
           locationId: "library",
-          intent: "Exploring The Memory Stack",
+          intent: "Exploring the Memory Stack",
         },
       ],
       [
@@ -326,7 +328,7 @@ describe("PaidServices JEV decisions", () => {
         {
           action: "inspect_location",
           locationId: "cafe",
-          intent: "Looking around The Tiny Cup",
+          intent: "Looking around the Tiny Cup",
         },
       ],
     ] as const) {

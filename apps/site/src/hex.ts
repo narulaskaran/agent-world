@@ -1,3 +1,11 @@
+import {
+  hexToWorld as axialToWorld,
+  hexDisk,
+  hexDistance,
+} from "@agent-world/shared/hex";
+
+export { hexDisk };
+
 export const HEX_SIZE = 1.15;
 
 export type TerrainKind = "plaza" | "park" | "path" | "grass";
@@ -10,29 +18,11 @@ export interface HexCell {
   kind: TerrainKind;
 }
 
-export function hexToWorld(
-  q: number,
-  r: number,
-  size = HEX_SIZE,
-): { x: number; z: number } {
-  return {
-    x: size * Math.sqrt(3) * (q + r / 2),
-    z: size * 1.5 * r,
-  };
-}
-
-export function hexDisk(radius: number): Array<{ q: number; r: number }> {
-  const cells: Array<{ q: number; r: number }> = [];
-  for (let q = -radius; q <= radius; q += 1) {
-    const r1 = Math.max(-radius, -q - radius);
-    const r2 = Math.min(radius, -q + radius);
-    for (let r = r1; r <= r2; r += 1) cells.push({ q, r });
-  }
-  return cells;
-}
+export const hexToWorld = (q: number, r: number, size = HEX_SIZE) =>
+  axialToWorld(q, r, size);
 
 export function terrainKindAt(q: number, r: number): TerrainKind {
-  const dist = (Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2;
+  const dist = hexDistance({ q, r });
   if (dist === 0) return "plaza";
   if (dist === 1) return "path";
   if (q + r > 2) return "park";

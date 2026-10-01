@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ServerMessage, WorldSnapshot } from "@agent-world/shared";
+import type { ServerMessage, WorldSnapshot } from "@agent-world/shared/world";
 import { API_URL } from "./api";
 
 const INITIAL_RECONNECT_MS = 1_000;
@@ -19,6 +19,7 @@ export function reconnectDelayMs(attempt: number): number {
 export function useWorld() {
   const [snapshot, setSnapshot] = useState<WorldSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
   const attemptRef = useRef(0);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export function useWorld() {
           return;
         }
         attemptRef.current = 0;
+        setFailedAttempts(0);
         if (message.type === "snapshot") setSnapshot(message.payload);
       };
       socket.onclose = () => {
@@ -49,6 +51,7 @@ export function useWorld() {
         if (cancelled) return;
         const delay = reconnectDelayMs(attemptRef.current);
         attemptRef.current += 1;
+        setFailedAttempts(attemptRef.current);
         timer = window.setTimeout(connect, delay);
       };
       socket.onerror = () => {
@@ -64,5 +67,5 @@ export function useWorld() {
     };
   }, []);
 
-  return { snapshot, connected };
+  return { snapshot, connected, failedAttempts };
 }

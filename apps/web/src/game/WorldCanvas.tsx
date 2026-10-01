@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { WorldSnapshot } from "@agent-world/shared";
+import type { WorldSnapshot } from "@agent-world/shared/world";
 import { WorldScene } from "./world-scene";
 
 interface Props {
@@ -35,10 +35,6 @@ export function WorldCanvas({ snapshot, selectedId, onSelect }: Props) {
   }, [snapshot, selectedId]);
 
   return (
-    <div
-      className="world-canvas"
-      ref={host}
-      aria-label="Agent World shared map"
-    />
+    <div className="world-canvas" ref={host} aria-label="Agent World map" />
   );
 }

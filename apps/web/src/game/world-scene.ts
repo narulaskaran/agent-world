@@ -1,11 +1,18 @@
 import * as THREE from "three";
-import type { PublicCharacter, WorldSnapshot } from "@agent-world/shared";
+import {
+  hashString,
+  type PublicCharacter,
+  type WorldArtifact,
+  type WorldSnapshot,
+} from "@agent-world/shared/world";
+import { assetUrl } from "../api";
 import {
   CAMERA_FAR,
   CAMERA_FOV,
   CAMERA_NEAR,
   DEFAULT_DISTANCE,
   DRAG_THRESHOLD_PX,
+  FOLLOW_MAX_DISTANCE,
   MAX_DISTANCE,
   MIN_DISTANCE,
   PAN_BOUNDS,
@@ -15,6 +22,7 @@ import {
   applyZoomDelta,
   cameraOffset,
   clamp,
+  followTarget,
   framePoints,
   isDragGesture,
   panFromScreenDelta,
@@ -32,9 +40,17 @@ import {
   CHARACTER_LABEL_HEIGHT,
   characterStandPose,
   createCharacterAvatar,
+  movementPlan,
   pawnFrameSamples,
 } from "./characters";
-import { createLandmarks, locationSignAnchors } from "./landmarks";
+import {
+  clearLandmarkFootprint,
+  createLandmarks,
+  locationSignAnchors,
+} from "./landmarks";
+
+/** Matches the stylesheet breakpoint where the inspector becomes a bottom sheet. */
+const INSPECTOR_SHEET_QUERY = "(max-width: 900px)";
 
 interface CharacterNode {
   id: string;
@@ -100,6 +116,10 @@ export class WorldScene {
   private resizeObserver: ResizeObserver;
   private userMovedCamera = false;
   private framedKey = "";
+  /** Character the camera keeps centred until the user pans. */
+  private followId: string | null = null;
+  private labelHtml = new Map<string, string>();
+  private artifactMarkers = new Map<string, THREE.Mesh>();
 
   constructor(host: HTMLElement, onSelect: (id: string | null) => void) {
     this.host = host;
@@ -159,6 +179,7 @@ export class WorldScene {
   }
 
   resetCamera() {
+    this.followId = null;
     this.userMovedCamera = false;
     this.framedKey = "";
     this.interacting = false;
@@ -179,6 +200,14 @@ export class WorldScene {
 
   sync(snapshot: WorldSnapshot, selectedId: string | null) {
     this.snapshot = snapshot;
+    if (selectedId !== this.selectedId) {
+      this.followId = selectedId;
+      if (selectedId)
+        this.desiredDistance = Math.min(
+          this.desiredDistance,
+          FOLLOW_MAX_DISTANCE,
+        );
+    }
     this.selectedId = selectedId;
     const live = new Set(snapshot.characters.map((character) => character.id));
     for (const [id, node] of this.nodes) {
@@ -186,6 +215,7 @@ export class WorldScene {
         this.scene.remove(node.group);
         node.label.remove();
         this.nodes.delete(id);
+        this.labelHtml.delete(id);
       }
     }
     const now = performance.now();
@@ -197,26 +227,23 @@ export class WorldScene {
         this.scene.add(node.group);
         this.labels.append(node.label);
       }
-      const destX =
-        character.state === "moving" ? character.targetX : character.x;
-      const destZ =
-        character.state === "moving" ? character.targetY : character.y;
-      const duration = character.state === "moving" ? 1_600 : 900;
-      if (node.toX !== destX || node.toZ !== destZ) {
+      const plan = movementPlan(character, snapshot.generatedAt);
+      if (node.toX !== plan.x || node.toZ !== plan.z) {
         node.fromX = node.visualX;
         node.fromZ = node.visualZ;
-        node.toX = destX;
-        node.toZ = destZ;
+        node.toX = plan.x;
+        node.toZ = plan.z;
         node.moveStarted = now;
-        node.moveDuration = duration;
+        node.moveDuration = plan.durationMs;
       }
-      node.moving = character.state === "moving";
+      node.moving = plan.walking;
       node.state = character.state;
       node.speaking = Boolean(character.speech);
       node.selection.visible = character.id === selectedId;
       node.tool.visible = character.toolActive;
       this.renderCharacterLabel(node, character, selectedId);
     }
+    this.syncArtifacts(snapshot.artifacts);
     const key = snapshot.characters
       .map((character) => character.id)
       .sort()
@@ -226,12 +253,45 @@ export class WorldScene {
     }
   }
 
+  private syncArtifacts(artifacts: WorldArtifact[]) {
+    const live = new Set(artifacts.map((artifact) => artifact.id));
+    for (const [id, marker] of this.artifactMarkers) {
+      if (live.has(id)) continue;
+      this.scene.remove(marker);
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.artifactMarkers.delete(id);
+    }
+    for (const artifact of artifacts) {
+      if (this.artifactMarkers.has(artifact.id)) continue;
+      const note = artifact.kind === "note";
+      const marker = new THREE.Mesh(
+        note
+          ? new THREE.BoxGeometry(7, 0.8, 9)
+          : new THREE.BoxGeometry(5, 5, 5),
+        new THREE.MeshLambertMaterial({ color: note ? 0xfff4d6 : 0xd7a04a }),
+      );
+      const hash = hashString(artifact.id);
+      const spot = clearLandmarkFootprint(
+        artifact.x + ((hash % 21) - 10),
+        artifact.y + (((hash >> 5) % 13) - 6),
+      );
+      const pose = characterStandPose(spot.x, spot.z);
+      marker.position.set(pose.x, pose.y + (note ? 0.6 : 2.6), pose.z);
+      marker.rotation.y = ((hash % 360) * Math.PI) / 180;
+      marker.castShadow = true;
+      marker.name = `artifact:${artifact.id}`;
+      this.scene.add(marker);
+      this.artifactMarkers.set(artifact.id, marker);
+    }
+  }
+
   private livingFrameSamples() {
-    const characters = this.snapshot?.characters ?? [];
-    return characters.flatMap((character) => {
-      const x = character.state === "moving" ? character.targetX : character.x;
-      const z = character.state === "moving" ? character.targetY : character.y;
-      return pawnFrameSamples(x, z);
+    const snapshot = this.snapshot;
+    if (!snapshot) return [];
+    return snapshot.characters.flatMap((character) => {
+      const plan = movementPlan(character, snapshot.generatedAt);
+      return pawnFrameSamples(plan.x, plan.z);
     });
   }
 
@@ -376,15 +436,21 @@ export class WorldScene {
       !character.toolActive && stateSymbols[character.state]
         ? stateSymbols[character.state]
         : "";
-    node.label.innerHTML = `${
+    const avatar = character.avatarUrl
+      ? `<img class="name-avatar" src="${escapeHtml(assetUrl(character.avatarUrl))}" alt="" />`
+      : "";
+    const html = `${
       character.speech
         ? `<span class="speech-bubble">${escapeHtml(character.speech)}</span>`
         : ""
     }${stateIcon ? `<span class="state-icon">${stateIcon}</span>` : ""}${
       sleep ? `<span class="sleep-icon">${sleep}</span>` : ""
-    }<span class="name-chip">${escapeHtml(character.name)}</span>${
+    }<span class="name-chip">${avatar}${escapeHtml(character.name)}</span>${
       intent ? `<span class="intent-chip">${escapeHtml(intent)}</span>` : ""
     }`;
+    if (this.labelHtml.get(character.id) === html) return;
+    this.labelHtml.set(character.id, html);
+    node.label.innerHTML = html;
   }
 
   private bindInput() {
@@ -473,6 +539,7 @@ export class WorldScene {
     if (isDragGesture(dx, dy, this.dragThreshold)) {
       this.pointerMoved = true;
       this.userMovedCamera = true;
+      this.followId = null;
       this.renderer.domElement.classList.add("is-panning");
       const pan = panFromScreenDelta(
         dx,
@@ -607,6 +674,19 @@ export class WorldScene {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.tick);
     const time = performance.now();
+    const followed = this.followId ? this.nodes.get(this.followId) : undefined;
+    if (followed && !this.interacting) {
+      const pose = characterStandPose(followed.visualX, followed.visualZ);
+      const target = followTarget(pose.x, pose.z, this.distance, {
+        aspect: this.host.clientWidth / Math.max(1, this.host.clientHeight),
+        inspector: this.selectedId
+          ? matchMedia(INSPECTOR_SHEET_QUERY).matches
+            ? "bottom"
+            : "left"
+          : "none",
+      });
+      this.desiredTarget.set(target.x, 0, target.z);
+    }
     this.applyCamera();
     this.fountainRings.forEach((ring, index) => {
       const cycle = (time / 1_400 + index / this.fountainRings.length) % 1;

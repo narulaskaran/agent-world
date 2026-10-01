@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { WORLD_HEIGHT } from "@agent-world/shared";
+import { WORLD_HEIGHT } from "@agent-world/shared/world";
 import { CAMERA_PITCH } from "./camera";
 import { TILE_TOP } from "./hex";
 
@@ -8,7 +8,7 @@ const SIGN_SPOTS: Array<{ name: string; x: number; z: number }> = [
   { name: "The Memory Stack", x: 145, z: 653 },
   { name: "Sunbeam Plaza", x: 572, z: 215 },
   { name: "Mossbell Park", x: 875, z: 76 },
-  { name: "Tinker Shed", x: 880, z: 445 },
+  { name: "The Tinker Shed", x: 880, z: 445 },
 ];
 
 function std(color: number, extras?: THREE.MeshStandardMaterialParameters) {
@@ -214,28 +214,28 @@ export function pointInLandmarkFootprint(
   );
 }
 
+/** How far behind (north of) a building a pawn still counts as hidden by it. */
+const BEHIND_MARGIN = 16;
+
 /**
  * Push a board point south (+Z, toward the overview camera) out of a building
- * and past its tilted-camera roof coverage.
+ * and past its tilted-camera roof coverage. Only points in the building's own
+ * z-band move, so a courtyard never cascades into the next building's corridor.
  */
 export function clearLandmarkFootprint(
   x: number,
   z: number,
 ): { x: number; z: number } {
-  let px = x;
-  let pz = z;
-  for (let step = 0; step < 4; step++) {
-    let moved = false;
-    for (const footprint of LANDMARK_FOOTPRINTS) {
-      const inCorridor = Math.abs(px - footprint.x) <= footprint.halfX + 12;
-      const standZ = courtyardStandZ(footprint);
-      if (!inCorridor || pz >= standZ) continue;
-      pz = standZ;
-      moved = true;
-    }
-    if (!moved) break;
+  for (const footprint of LANDMARK_FOOTPRINTS) {
+    const standZ = courtyardStandZ(footprint);
+    if (
+      Math.abs(x - footprint.x) <= footprint.halfX + 12 &&
+      z >= footprint.z - footprint.halfZ - BEHIND_MARGIN &&
+      z < standZ
+    )
+      return { x, z: standZ };
   }
-  return { x: px, z: pz };
+  return { x, z };
 }
 
 export function createLandmarks(parent: THREE.Object3D): {

@@ -4,56 +4,81 @@ import type {
   DirectiveInput,
   ServerMessage,
   UpdateCharacterInput,
+  WorldRecap,
   WorldSnapshot,
 } from "@agent-world/shared";
 import type { WorldRepository } from "@agent-world/db";
 import type { PaidServices } from "./services.js";
-import { WorldEngine } from "./world.js";
+import { WorldEngine, type WorldEngineOptions } from "./world.js";
+
+const TICK_MS = 1_000;
+/** Clients interpolate movement from arrival times, so idle frames are rare. */
+const HEARTBEAT_MS = 5_000;
+const PUBLISH_COALESCE_MS = 150;
+const PRUNE_MS = 10 * 60_000;
 
 export class LocalRuntime {
   readonly engine: WorldEngine;
   private readonly listeners = new Set<(message: ServerMessage) => void>();
   private timers: NodeJS.Timeout[] = [];
-  private viewers = 0;
+  private publishTimer: NodeJS.Timeout | null = null;
+  private ticking: Promise<void> | null = null;
 
   constructor(
     readonly repository: WorldRepository,
     services?: PaidServices,
-    options: { decisionScale?: number } = {},
+    options: WorldEngineOptions = {},
   ) {
     this.engine = new WorldEngine(
       repository,
-      () => this.publish(),
+      () => this.schedulePublish(),
       services,
       options,
     );
   }
 
   start(): void {
-    this.timers.push(setInterval(() => void this.engine.runDueJobs(), 1_000));
-    // Realtime frames are derived from persisted movement segments; this timer owns no world state.
-    this.timers.push(setInterval(() => this.publish(), 1_000));
+    this.repository.recoverAfterRestart();
+    this.repository.prune();
+    this.timers.push(
+      setInterval(() => {
+        if (this.ticking) return;
+        this.ticking = this.engine.runDueJobs().finally(() => {
+          this.ticking = null;
+        });
+      }, TICK_MS),
+      setInterval(() => this.publish(), HEARTBEAT_MS),
+      setInterval(() => this.repository.prune(), PRUNE_MS),
+    );
   }
 
-  stop(): void {
+  /** Stops scheduling and waits for the job in flight so leases are released. */
+  async stop(): Promise<void> {
     this.timers.forEach(clearInterval);
     this.timers = [];
+    if (this.publishTimer) clearTimeout(this.publishTimer);
+    this.publishTimer = null;
+    await this.ticking;
   }
 
   snapshot(): WorldSnapshot {
-    return this.engine.snapshot(this.viewers);
+    return this.engine.snapshot();
   }
 
   subscribe(listener: (message: ServerMessage) => void): () => void {
     this.listeners.add(listener);
-    this.viewers += 1;
     listener({ type: "snapshot", payload: this.snapshot() });
-    this.publish();
     return () => {
       this.listeners.delete(listener);
-      this.viewers = Math.max(0, this.viewers - 1);
-      this.publish();
     };
+  }
+
+  private schedulePublish(): void {
+    if (this.publishTimer || !this.listeners.size) return;
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = null;
+      this.publish();
+    }, PUBLISH_COALESCE_MS);
   }
 
   private publish(): void {
@@ -69,6 +94,10 @@ export class LocalRuntime {
     return this.engine.createCharacter(input);
   }
 
+  seedStarterCast(): Promise<number> {
+    return this.engine.seedStarterCast();
+  }
+
   updateCharacter(name: string, input: UpdateCharacterInput): void {
     this.engine.updateCharacter(name, input);
   }
@@ -79,6 +108,10 @@ export class LocalRuntime {
 
   regenerateAvatar(name: string): Promise<void> {
     return this.engine.regenerateAvatar(name);
+  }
+
+  avatar(idOrName: string): string | null {
+    return this.repository.avatarFor(idOrName);
   }
 
   deleteCharacter(name: string): void {
@@ -93,6 +126,10 @@ export class LocalRuntime {
     this.engine.setServerDailyBudgetMicros(serverDailyBudgetMicros);
   }
 
+  setDecisionScale(decisionScale: number): void {
+    this.engine.setDecisionScale(decisionScale);
+  }
+
   resetWorld(): void {
     this.engine.resetWorld();
   }
@@ -101,28 +138,11 @@ export class LocalRuntime {
     return this.engine.adminState();
   }
 
+  recap(since: number): WorldRecap {
+    return this.engine.recap(since);
+  }
+
   inspectCharacter(idOrName: string): CharacterInspect | null {
-    const row = this.repository.getCharacter(idOrName);
-    if (!row) return null;
-    const publicCharacter = this.repository
-      .listPublicCharacters()
-      .find((character) => character.id === row.id);
-    if (!publicCharacter) return null;
-    return {
-      id: publicCharacter.id,
-      name: publicCharacter.name,
-      personality: publicCharacter.personality ?? row.personality,
-      model: publicCharacter.model ?? row.model,
-      dailyBudgetMicros:
-        publicCharacter.dailyBudgetMicros ?? row.dailyBudgetMicros,
-      spentTodayMicros:
-        publicCharacter.spentTodayMicros ?? row.spentTodayMicros,
-      decisionIntervalSeconds:
-        publicCharacter.decisionIntervalSeconds ?? row.decisionIntervalSeconds,
-      reputation: 0,
-      locationId: publicCharacter.locationId,
-      memories: publicCharacter.memories ?? [],
-      relationships: publicCharacter.relationships ?? [],
-    };
+    return this.repository.inspect(idOrName);
   }
 }

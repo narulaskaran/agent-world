@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap");
-
 :root {
   font-family: "DM Sans", sans-serif;
   color: #28231f;
@@ -86,17 +84,6 @@ select:focus-visible {
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-.auth-label {
-  color: #74695f;
-  font-size: 12px;
-}
-.auth-user {
-  max-width: 210px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
 }
 .connection {
   display: flex;
@@ -220,10 +207,101 @@ select:focus-visible {
   font-weight: 700;
   cursor: pointer;
 }
-.owner-chip span {
+.owner-chip > span:first-child {
+  flex-shrink: 0;
   width: 18px;
   height: 18px;
   border: 2px solid #3c332c;
+}
+.owner-chip.selected {
+  border-color: #385d50;
+  box-shadow: inset 0 0 0 1px #385d50;
+}
+.owner-chip-name {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-overflow {
+  position: relative;
+}
+.chip-overflow summary {
+  display: grid;
+  place-items: center;
+  min-width: 39px;
+  height: 39px;
+  padding: 0 10px;
+  border: 1px solid #bba98d;
+  border-radius: 9px;
+  background: #fff8e9;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.chip-overflow summary::-webkit-details-marker {
+  display: none;
+}
+.chip-overflow-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  display: grid;
+  gap: 6px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #c9bda6;
+  border-radius: 10px;
+  background: #fffaf0;
+  box-shadow: 0 10px 24px rgba(55, 42, 29, 0.18);
+}
+.brain-chip {
+  height: 39px;
+  padding: 0 12px;
+  border: 1px solid #c9bda6;
+  border-radius: 999px;
+  background: #fff8e9;
+  color: #4d6557;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.brain-chip.paid {
+  background: #e6efdf;
+  border-color: #9fb89f;
+}
+.connection-banner {
+  padding: 6px 28px;
+  background: #f6dccf;
+  color: #6b3a2c;
+  font-size: 13px;
+  border-bottom: 1px solid #e2b9a6;
+}
+.name-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2f5a4a;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: #b9cbbf;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.name-link:hover {
+  text-decoration-color: currentColor;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 .main-grid {
   display: grid;
@@ -356,6 +434,7 @@ select:focus-visible {
   text-align: center;
 }
 .character-label .speech-bubble {
+  width: max-content;
   max-width: 190px;
   padding: 7px 9px;
   border-radius: 10px;
@@ -506,14 +585,6 @@ select:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-weight: 800;
-}
-.event-count {
-  align-self: center;
-  padding: 5px 8px;
-  border: 1px solid #d7c8ad;
-  color: #5c5146;
-  font-size: 0.875rem;
-  border-radius: 5px;
 }
 .event-list {
   list-style: none;
@@ -991,6 +1062,8 @@ select:focus-visible {
   display: grid;
   gap: 6px;
   flex-shrink: 0;
+  max-height: 168px;
+  overflow-y: auto;
 }
 .artifact-list li {
   padding: 7px 10px;
@@ -1010,34 +1083,6 @@ select:focus-visible {
   margin: 6px 0 0;
   color: #544b42;
   font-size: 12px;
-}
-.restore-export {
-  margin-top: 8px;
-}
-.admin-lists {
-  display: grid;
-  gap: 14px;
-  margin-top: 18px;
-}
-.admin-lists h3 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.admin-lists ul {
-  margin: 0;
-  padding-left: 18px;
-  color: #544b42;
-  font-size: 13px;
-}
-.admin-lists li {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-.admin-lists .button-row {
-  justify-content: flex-start;
 }
 @media (max-width: 900px) {
   .topbar {
@@ -1077,6 +1122,16 @@ select:focus-visible {
   .header-actions::-webkit-scrollbar {
     display: none;
   }
+  .header-actions > .owner-chip,
+  .header-actions > .chip-overflow {
+    display: none;
+  }
+  .brain-chip {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
   .header-status {
     flex: 1;
     min-width: 0;
@@ -1093,9 +1148,6 @@ select:focus-visible {
     font-size: 11px;
     white-space: nowrap;
   }
-  .viewer-count-here {
-    display: none;
-  }
   .header-actions .primary,
   .header-actions .secondary {
     flex-shrink: 0;
@@ -1110,9 +1162,6 @@ select:focus-visible {
     height: 32px;
     padding: 0 8px;
     font-size: 12px;
-  }
-  .auth-user {
-    max-width: 132px;
   }
   .main-grid {
     grid-template-columns: 1fr;
@@ -1140,6 +1189,9 @@ select:focus-visible {
   }
   .record-sheet-close {
     display: grid;
+  }
+  .activity-panel.sheet-open .panel-heading {
+    padding-right: 64px;
   }
   .record-sheet-backdrop {
     display: block;
@@ -1172,16 +1224,13 @@ select:focus-visible {
     display: none;
   }
   .world-panel:has(.inspector) .record-fab {
-    bottom: auto;
-    top: 56px;
+    display: none;
   }
   .world-meta {
     gap: 8px;
   }
   .world-meta p {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: none;
   }
   .inspector {
     left: 8px;
@@ -1218,15 +1267,190 @@ select:focus-visible {
     font-size: 16px;
   }
   .header-status {
-    flex-direction: column;
-    align-items: flex-end;
-    justify-content: center;
-    gap: 1px;
-    line-height: 1.2;
+    display: none;
   }
-  .viewer-count {
-    padding: 0;
-    background: transparent;
-    font-size: 10px;
+}
+.feed-filter select {
+  max-width: 10rem;
+  padding: 6px 8px;
+  border: 1px solid #d7c8ad;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #5c5146;
+  font-size: 13px;
+}
+.panel-heading {
+  align-items: center;
+  gap: 8px;
+}
+.thread-count {
+  color: #8a7c6c;
+  font-weight: 400;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.thread-lines {
+  margin: 6px 0 2px;
+  padding: 0 0 0 4px;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: #4f463e;
+}
+.thread-lines strong {
+  color: #2f4a3f;
+}
+.thread-end {
+  margin: 4px 0 0;
+  color: #8a7c6c;
+  font-size: 12px;
+  font-style: italic;
+}
+.artifact-shelf {
+  flex-shrink: 0;
+  padding: 8px 0 4px;
+  border-bottom: 1px solid #ddd1ba;
+}
+.artifact-shelf h3 {
+  margin: 0;
+  padding: 0 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b5d4f;
+}
+.relationship-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.tier {
+  color: #6b7d70;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.affinity-bar {
+  height: 5px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: #ece2cf;
+  overflow: hidden;
+}
+.affinity-bar span {
+  display: block;
+  height: 100%;
+  background: #6b9a7b;
+}
+.memory.impression {
+  color: #5b4a6b;
+}
+.personality-copy {
+  white-space: pre-line;
+}
+.brain-hint {
+  margin: 4px 0 14px;
+  color: #544b42;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.provider-failure {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-left: 4px solid #c98b4f;
+  background: #fbefdc;
+  color: #5d4630;
+  font-size: 12px;
+}
+.admin-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.admin-controls > label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.admin-controls small {
+  color: #857667;
+  font-weight: 400;
+}
+.character-label .name-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.name-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #fff;
+}
+.recap-card {
+  position: absolute;
+  z-index: 14;
+  left: 16px;
+  bottom: 16px;
+  width: min(22rem, calc(100% - 32px));
+  padding: 14px 16px;
+  border: 1px solid #c3b394;
+  border-radius: 12px;
+  background: #fff9ed;
+  box-shadow: 0 12px 28px rgba(32, 44, 32, 0.2);
+}
+.recap-card .close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+}
+.recap-card h2 {
+  margin: 2px 0 6px;
+  font:
+    22px "DM Serif Display",
+    serif;
+}
+.recap-card p {
+  margin: 0;
+  font-size: 13px;
+  color: #544b42;
+}
+.recap-card ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #544b42;
+}
+.loading code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e8dfca;
+}
+@media (max-width: 900px) {
+  .brain-chip {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+  .owner-chip-name {
+    max-width: 6rem;
+  }
+  .chip-overflow summary {
+    height: 32px;
+  }
+  .connection-banner {
+    padding: 6px 12px;
+  }
+  .chip-overflow-menu {
+    position: fixed;
+    top: 60px;
+    right: 8px;
   }
 }

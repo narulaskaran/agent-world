@@ -32,5 +32,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Format
+        run: pnpm format:check
+
       - name: pnpm check
         run: pnpm check
+
+      - name: Smoke
+        run: pnpm smoke

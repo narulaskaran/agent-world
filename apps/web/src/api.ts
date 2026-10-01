@@ -1,13 +1,21 @@
 import type {
-  CharacterInspect,
   CreateCharacterInput,
   DirectiveInput,
   UpdateCharacterInput,
 } from "@agent-world/shared";
+import type {
+  BrainMode,
+  CharacterInspect,
+  WorldRecap,
+} from "@agent-world/shared/world";
 
 export const API_URL =
   import.meta.env.VITE_API_URL ??
-  (import.meta.env.DEV ? "http://localhost:4310" : "");
+  (import.meta.env.DEV ? "http://127.0.0.1:4310" : "");
+
+/** Server-relative asset paths (avatars) resolved against the API origin. */
+export const assetUrl = (path: string): string =>
+  path.startsWith("/") ? `${API_URL}${path}` : path;
 
 export class ApiError extends Error {
   constructor(
@@ -39,6 +47,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export interface AdminState {
+  brain: BrainMode;
+  liveMpp: boolean;
+  lastFailure: { provider: string; message: string; at: number } | null;
+  queueDepth: number;
+  costs: unknown[];
+  world: Record<string, unknown>;
+  inFlight: string[];
+}
+
 export const api = {
   create: (input: CreateCharacterInput) =>
     request("/api/characters", { method: "POST", body: JSON.stringify(input) }),
@@ -65,23 +83,30 @@ export const api = {
     request<{ character: CharacterInspect }>(
       `/api/characters/${encodeURIComponent(id)}`,
     ),
-  admin: () =>
-    request<{
-      liveMpp: boolean;
-      queueDepth: number;
-      costs: unknown[];
-      world: Record<string, unknown>;
-      inFlight: string[];
-    }>("/api/admin"),
+  recap: (since: number) =>
+    request<WorldRecap>(`/api/recap?since=${Math.floor(since)}`),
+  seed: () =>
+    request<{ created: number }>("/api/admin/seed", {
+      method: "POST",
+      body: "{}",
+    }),
+  admin: () => request<AdminState>("/api/admin"),
   pauseWorld: (paused: boolean) =>
     request("/api/admin/pause", {
       method: "POST",
       body: JSON.stringify({ paused }),
     }),
-  updateWorld: (serverDailyBudgetMicros: number) =>
+  updateWorld: (input: {
+    serverDailyBudgetMicros?: number;
+    decisionScale?: number;
+  }) =>
     request("/api/admin", {
       method: "PATCH",
-      body: JSON.stringify({ serverDailyBudgetMicros }),
+      body: JSON.stringify(input),
     }),
-  resetWorld: () => request("/api/admin/reset", { method: "POST", body: "{}" }),
+  resetWorld: () =>
+    request("/api/admin/reset", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "reset" }),
+    }),
 };

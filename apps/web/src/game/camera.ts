@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { WORLD_HEIGHT, WORLD_WIDTH } from "@agent-world/shared";
+import { WORLD_HEIGHT, WORLD_WIDTH } from "@agent-world/shared/world";
 
 /** Pitch from the ground plane. Civ-5 overview, not first-person. */
 export const CAMERA_PITCH = (52 * Math.PI) / 180;
@@ -46,6 +46,37 @@ export function cameraOffset(
     y: elevation,
     z: Math.cos(yaw) * horizontal,
   };
+}
+
+/** Farthest view while following someone, so the pawn stays readable. */
+export const FOLLOW_MAX_DISTANCE = 520;
+
+/**
+ * Look target that keeps a followed pawn clear of the inspector. A bottom
+ * sheet lifts the pawn into the upper half (target moves toward the camera);
+ * a left panel moves it into the right-hand part of the map.
+ */
+export function followTarget(
+  x: number,
+  z: number,
+  distance: number,
+  view: { aspect: number; inspector: "left" | "bottom" | "none" },
+): { x: number; z: number } {
+  if (view.inspector === "bottom") {
+    const offset = cameraOffset(distance);
+    const lift = 0.3;
+    return { x: x + offset.x * lift, z: z + offset.z * lift };
+  }
+  if (view.inspector === "left") {
+    const visibleWidth =
+      2 * distance * Math.tan(((CAMERA_FOV / 2) * Math.PI) / 180) * view.aspect;
+    const shift = visibleWidth * 0.2;
+    return {
+      x: x - Math.cos(CAMERA_YAW) * shift,
+      z: z + Math.sin(CAMERA_YAW) * shift,
+    };
+  }
+  return { x, z };
 }
 
 export function applyZoomDelta(

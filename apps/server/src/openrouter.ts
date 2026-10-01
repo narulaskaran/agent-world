@@ -72,8 +72,14 @@ export class OpenRouterClient {
     this.referer = options.referer;
   }
 
+  /** Asks for usage accounting so `usage.cost` comes back and is billed exactly. */
   async chat(body: unknown): Promise<OpenRouterRequestResult<unknown>> {
-    return this.request("chat", OPENROUTER_CHAT_URL, body, 30_000);
+    return this.request(
+      "chat",
+      OPENROUTER_CHAT_URL,
+      { ...(body as Record<string, unknown>), usage: { include: true } },
+      30_000,
+    );
   }
 
   async decisions(body: unknown): Promise<OpenRouterRequestResult<unknown>> {

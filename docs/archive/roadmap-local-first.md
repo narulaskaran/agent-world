@@ -1,5 +1,9 @@
 # Agent World roadmap: local-first
 
+> Archived. The local-first migration this plan describes is complete; it is
+> kept for history. Current behaviour is documented in `README.md` and
+> `CURSOR.md`.
+
 This file is an executable plan. An agent with no prior context should be able
 to read it top to bottom and complete every step. Read **How to work**,
 **Locked decisions** and **Repo facts** first, then do the steps in order.
