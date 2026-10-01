@@ -1,16 +1,25 @@
 import Database from "better-sqlite3";
-import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import type {
-  CharacterState,
-  PublicCharacter,
-  PublicMemory,
-  PublicRelationship,
-  WorldEvent,
-} from "@agent-world/shared";
 import {
+  BUDGET_SLEEP_INTENT,
+  hashString,
+  locationAtPoint,
+  type CharacterInspect,
+  type CharacterState,
+  type PublicCharacter,
+  type PublicMemory,
+  type PublicRelationship,
+  type WorldArtifact,
+  type WorldEvent,
+  type WorldLocationId,
+  type WorldRecap,
+} from "@agent-world/shared/world";
+import {
+  artifacts,
   characterQueue,
   characters,
+  conversationMessages,
   conversations,
   costEntries,
   memories,
@@ -27,6 +36,15 @@ export const localDate = (date = new Date()): string => {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+export const PUBLIC_EVENT_LIMIT = 100;
+export const EVENT_RETENTION = 2_000;
+export const ARTIFACT_RETENTION = 60;
+const QUEUE_LEASE_MS = 120_000;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
+
+export type CharacterRow = typeof characters.$inferSelect;
 
 export interface QueueItem {
   id: string;
@@ -49,7 +67,20 @@ export interface ConversationRecord {
   terminationReason?: string | null;
 }
 
-const schemaSql = `
+export interface ConversationMessage {
+  speakerId: string | null;
+  speakerName: string;
+  text: string;
+  createdAt: number;
+}
+
+export interface RepositoryOptions {
+  /** Applied at startup when set; otherwise the stored value is kept. */
+  serverDailyBudgetMicros?: number;
+  decisionScale?: number;
+}
+
+export const schemaSql = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS characters (
@@ -76,42 +107,90 @@ CREATE TABLE IF NOT EXISTS relationships (
 );
 CREATE TABLE IF NOT EXISTS world_events (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, character_id TEXT, character_name TEXT,
-  target_character_id TEXT, summary TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL
+  target_character_id TEXT, summary TEXT NOT NULL, detail TEXT, conversation_id TEXT, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS character_queue (
   id TEXT PRIMARY KEY, character_id TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
   priority INTEGER NOT NULL DEFAULT 0, dedupe_key TEXT, not_before INTEGER NOT NULL,
   expires_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS character_queue_dedupe_pending
-  ON character_queue(character_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND status = 'pending';
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY, character_a_id TEXT NOT NULL, character_b_id TEXT NOT NULL,
   status TEXT NOT NULL, message_count INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL,
   ended_at INTEGER, termination_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS conversation_messages (
+  id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, speaker_id TEXT, speaker_name TEXT NOT NULL,
+  text TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cost_entries (
   id TEXT PRIMARY KEY, character_id TEXT, category TEXT NOT NULL, provider TEXT NOT NULL,
   amount_micros INTEGER NOT NULL, reserved_micros INTEGER NOT NULL, status TEXT NOT NULL,
   latency_ms INTEGER, metadata TEXT NOT NULL DEFAULT '{}', budget_date TEXT NOT NULL, created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY, location_id TEXT NOT NULL, character_id TEXT, character_name TEXT,
+  kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS world_state (
   id INTEGER PRIMARY KEY CHECK(id = 1), simulation_paused INTEGER NOT NULL DEFAULT 0,
   paused_at INTEGER NOT NULL DEFAULT 0,
   server_daily_budget_micros INTEGER NOT NULL DEFAULT 2000000,
-  server_spent_today_micros INTEGER NOT NULL DEFAULT 0, budget_date TEXT NOT NULL, updated_at INTEGER NOT NULL
+  server_spent_today_micros INTEGER NOT NULL DEFAULT 0, decision_scale REAL NOT NULL DEFAULT 1,
+  budget_date TEXT NOT NULL, updated_at INTEGER NOT NULL
 );
 `;
+
+const indexSql = `
+CREATE UNIQUE INDEX IF NOT EXISTS character_queue_dedupe_pending
+  ON character_queue(character_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND status = 'pending';
+CREATE INDEX IF NOT EXISTS character_queue_due ON character_queue(character_id, status, not_before);
+CREATE INDEX IF NOT EXISTS character_queue_status ON character_queue(status, created_at);
+CREATE INDEX IF NOT EXISTS world_events_created ON world_events(created_at);
+CREATE INDEX IF NOT EXISTS world_events_conversation ON world_events(conversation_id);
+CREATE INDEX IF NOT EXISTS memories_character ON memories(character_id, active, created_at);
+CREATE INDEX IF NOT EXISTS relationships_other ON relationships(other_character_id);
+CREATE INDEX IF NOT EXISTS conversations_status ON conversations(status, ended_at);
+CREATE INDEX IF NOT EXISTS conversation_messages_conversation ON conversation_messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS cost_entries_created ON cost_entries(created_at);
+CREATE INDEX IF NOT EXISTS artifacts_created ON artifacts(created_at);
+`;
+
+/** Avatars can be megabyte data URLs; snapshots carry a short URL instead. */
+export const publicAvatarUrl = (
+  id: string,
+  avatarUrl: string | null,
+): string | null => {
+  if (!avatarUrl) return null;
+  if (!avatarUrl.startsWith("data:")) return avatarUrl;
+  return `/api/characters/${encodeURIComponent(id)}/avatar?v=${hashString(avatarUrl.slice(-64))}`;
+};
 
 export class WorldRepository {
   readonly sqlite: Database.Database;
   readonly db: ReturnType<typeof drizzle>;
 
-  constructor(path: string) {
+  constructor(path: string, options: RepositoryOptions = {}) {
     this.sqlite = new Database(path);
     this.sqlite.exec(schemaSql);
-    this.ensureCharacterColumns();
-    this.ensureWorldStateColumns();
+    this.ensureColumns("characters", [
+      ["movement_started_at", "INTEGER NOT NULL DEFAULT 0"],
+      ["movement_arrives_at", "INTEGER NOT NULL DEFAULT 0"],
+      ["lease_token", "TEXT"],
+      ["lease_until", "INTEGER NOT NULL DEFAULT 0"],
+    ]);
+    this.ensureColumns("world_state", [
+      ["paused_at", "INTEGER NOT NULL DEFAULT 0"],
+      ["decision_scale", "REAL NOT NULL DEFAULT 1"],
+    ]);
+    this.ensureColumns("world_events", [["conversation_id", "TEXT"]]);
+    this.sqlite
+      .prepare(
+        "UPDATE characters SET movement_started_at = CASE WHEN movement_started_at = 0 THEN updated_at ELSE movement_started_at END, movement_arrives_at = CASE WHEN movement_arrives_at = 0 THEN updated_at ELSE movement_arrives_at END",
+      )
+      .run();
+    this.sqlite.exec(indexSql);
     this.db = drizzle(this.sqlite);
     const now = Date.now();
     this.db
@@ -120,61 +199,61 @@ export class WorldRepository {
         id: 1,
         simulationPaused: false,
         pausedAt: 0,
-        serverDailyBudgetMicros: Number(
-          process.env.AGENT_WORLD_GLOBAL_DAILY_BUDGET_MICROS ?? 2_000_000,
-        ),
+        serverDailyBudgetMicros: options.serverDailyBudgetMicros ?? 2_000_000,
         serverSpentTodayMicros: 0,
+        decisionScale: options.decisionScale ?? 1,
         budgetDate: localDate(),
         updatedAt: now,
       })
       .onConflictDoNothing()
       .run();
+    if (options.serverDailyBudgetMicros !== undefined)
+      this.setServerDailyBudgetMicros(options.serverDailyBudgetMicros);
+    if (options.decisionScale !== undefined)
+      this.setDecisionScale(options.decisionScale);
     this.resetDailyBudgetsIfNeeded();
   }
 
-  private ensureCharacterColumns(): void {
+  private ensureColumns(table: string, additions: Array<[string, string]>) {
     const columns = new Set(
       (
-        this.sqlite.prepare("PRAGMA table_info(characters)").all() as Array<{
+        this.sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{
           name: string;
         }>
       ).map((column) => column.name),
     );
-    const additions: Array<[string, string]> = [
-      ["movement_started_at", "INTEGER NOT NULL DEFAULT 0"],
-      ["movement_arrives_at", "INTEGER NOT NULL DEFAULT 0"],
-      ["lease_token", "TEXT"],
-      ["lease_until", "INTEGER NOT NULL DEFAULT 0"],
-    ];
     for (const [name, definition] of additions) {
       if (!columns.has(name))
         this.sqlite.exec(
-          `ALTER TABLE characters ADD COLUMN ${name} ${definition}`,
+          `ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`,
         );
     }
-    this.sqlite
-      .prepare(
-        "UPDATE characters SET movement_started_at = CASE WHEN movement_started_at = 0 THEN updated_at ELSE movement_started_at END, movement_arrives_at = CASE WHEN movement_arrives_at = 0 THEN updated_at ELSE movement_arrives_at END",
-      )
-      .run();
-  }
-
-  private ensureWorldStateColumns(): void {
-    const columns = new Set(
-      (
-        this.sqlite.prepare("PRAGMA table_info(world_state)").all() as Array<{
-          name: string;
-        }>
-      ).map((column) => column.name),
-    );
-    if (!columns.has("paused_at"))
-      this.sqlite.exec(
-        "ALTER TABLE world_state ADD COLUMN paused_at INTEGER NOT NULL DEFAULT 0",
-      );
   }
 
   close(): void {
     this.sqlite.close();
+  }
+
+  /**
+   * After a crash or restart no job is running: drop leases, return claimed
+   * queue items, and refund reservations whose calls never settled.
+   */
+  recoverAfterRestart(now = Date.now()): void {
+    this.sqlite.transaction(() => {
+      this.sqlite
+        .prepare("UPDATE characters SET lease_token = NULL, lease_until = 0")
+        .run();
+      this.sqlite
+        .prepare(
+          "UPDATE character_queue SET status = 'pending', not_before = ? WHERE status = 'processing'",
+        )
+        .run(now);
+    })();
+    const reserved = this.sqlite
+      .prepare("SELECT id FROM cost_entries WHERE status = 'reserved'")
+      .all() as Array<{ id: string }>;
+    for (const entry of reserved)
+      this.releaseCost(entry.id, { error: "interrupted by restart" });
   }
 
   resetDailyBudgetsIfNeeded(): void {
@@ -188,11 +267,15 @@ export class WorldRepository {
         .set({ budgetDate: today, serverSpentTodayMicros: 0, updatedAt: now })
         .where(eq(worldState.id, 1))
         .run();
+      // SET expressions read the old row, so `intent` still sees the old state.
       this.sqlite
         .prepare(
-          "UPDATE characters SET spent_today_micros = 0, budget_date = ?, state = CASE WHEN paused = 1 THEN 'paused' ELSE 'active' END, updated_at = ?",
+          `UPDATE characters SET spent_today_micros = 0, budget_date = ?,
+            state = CASE WHEN state = 'sleeping' AND intent = ? THEN CASE WHEN paused = 1 THEN 'paused' ELSE 'active' END ELSE state END,
+            intent = CASE WHEN state = 'sleeping' AND intent = ? THEN 'Waking up to a new day' ELSE intent END,
+            updated_at = ?`,
         )
-        .run(today, now);
+        .run(today, BUDGET_SLEEP_INTENT, BUDGET_SLEEP_INTENT, now);
     })();
   }
 
@@ -200,9 +283,10 @@ export class WorldRepository {
     return this.db.select().from(worldState).where(eq(worldState.id, 1)).get()!;
   }
 
-  setSimulationPaused(paused: boolean): void {
+  /** Returns false when the world was already in the requested state. */
+  setSimulationPaused(paused: boolean): boolean {
     const state = this.getWorldState();
-    if (state.simulationPaused === paused) return;
+    if (state.simulationPaused === paused) return false;
     const now = Date.now();
     this.sqlite.transaction(() => {
       if (!paused && state.pausedAt > 0) {
@@ -239,6 +323,7 @@ export class WorldRepository {
         .where(eq(worldState.id, 1))
         .run();
     })();
+    return true;
   }
 
   setServerDailyBudgetMicros(serverDailyBudgetMicros: number): void {
@@ -249,8 +334,15 @@ export class WorldRepository {
       .run();
   }
 
-  listCharacterRows() {
-    this.resetDailyBudgetsIfNeeded();
+  setDecisionScale(decisionScale: number): void {
+    this.db
+      .update(worldState)
+      .set({ decisionScale, updatedAt: Date.now() })
+      .where(eq(worldState.id, 1))
+      .run();
+  }
+
+  listCharacterRows(): CharacterRow[] {
     return this.db
       .select()
       .from(characters)
@@ -258,7 +350,7 @@ export class WorldRepository {
       .all();
   }
 
-  getCharacter(idOrName: string) {
+  getCharacter(idOrName: string): CharacterRow | undefined {
     return this.db
       .select()
       .from(characters)
@@ -284,7 +376,7 @@ export class WorldRepository {
   }
 
   positionAt(
-    character: typeof characters.$inferSelect,
+    character: CharacterRow,
     now = Date.now(),
   ): { x: number; y: number } {
     if (
@@ -304,15 +396,23 @@ export class WorldRepository {
     };
   }
 
+  locationOf(
+    character: CharacterRow,
+    now = Date.now(),
+  ): WorldLocationId | null {
+    const position = this.positionAt(character, now);
+    return locationAtPoint(position.x, position.y)?.id ?? null;
+  }
+
   startMovement(
     id: string,
     targetX: number,
     targetY: number,
     speedPerSecond: number,
     intent: string,
-  ): void {
+  ): number | null {
     const character = this.getCharacter(id);
-    if (!character) return;
+    if (!character) return null;
     const now = Date.now();
     const current = this.positionAt(character, now);
     const duration = Math.max(
@@ -330,6 +430,7 @@ export class WorldRepository {
       state: "moving",
       intent,
     });
+    return now + duration;
   }
 
   materializeArrivals(now = Date.now()): number {
@@ -386,21 +487,68 @@ export class WorldRepository {
   }
 
   addEvent(event: WorldEvent): void {
-    this.db.insert(worldEvents).values(event).run();
-    this.sqlite
-      .prepare(
-        "DELETE FROM world_events WHERE id IN (SELECT id FROM world_events ORDER BY created_at DESC LIMIT -1 OFFSET 100)",
-      )
+    this.db
+      .insert(worldEvents)
+      .values({ ...event, conversationId: event.conversationId ?? null })
       .run();
   }
 
-  listEvents(): WorldEvent[] {
+  listEvents(limit = PUBLIC_EVENT_LIMIT): WorldEvent[] {
     return this.db
       .select()
       .from(worldEvents)
       .orderBy(desc(worldEvents.createdAt))
-      .limit(100)
+      .limit(limit)
       .all() as WorldEvent[];
+  }
+
+  /** Recent events that involve one character, newest first. */
+  eventsFor(characterId: string, limit: number): WorldEvent[] {
+    return this.db
+      .select()
+      .from(worldEvents)
+      .where(
+        sql`(${worldEvents.characterId} = ${characterId} OR ${worldEvents.targetCharacterId} = ${characterId}) AND ${worldEvents.kind} NOT IN ('conversation', 'system')`,
+      )
+      .orderBy(desc(worldEvents.createdAt))
+      .limit(limit)
+      .all() as WorldEvent[];
+  }
+
+  recap(since: number, until = Date.now()): WorldRecap {
+    const count = (where: string) =>
+      Number(
+        (
+          this.sqlite
+            .prepare(
+              `SELECT count(*) AS count FROM world_events WHERE created_at > ? AND created_at <= ? AND ${where}`,
+            )
+            .get(since, until) as { count: number }
+        ).count,
+      );
+    const highlights = this.sqlite
+      .prepare(
+        `SELECT id, kind, character_id AS characterId, character_name AS characterName,
+          target_character_id AS targetCharacterId, summary, detail,
+          conversation_id AS conversationId, created_at AS createdAt
+         FROM world_events
+         WHERE created_at > ? AND created_at <= ?
+           AND (kind IN ('arrival', 'memory', 'artifact', 'tool')
+             OR (kind = 'conversation' AND summary LIKE '% started talking.'))
+         ORDER BY created_at DESC LIMIT 8`,
+      )
+      .all(since, until) as WorldEvent[];
+    return {
+      since,
+      until,
+      conversations: count(
+        "kind = 'conversation' AND summary LIKE '% started talking.'",
+      ),
+      memories: count("kind = 'memory'"),
+      arrivals: count("kind = 'arrival'"),
+      artifacts: count("kind = 'artifact'"),
+      highlights,
+    };
   }
 
   enqueue(
@@ -430,54 +578,61 @@ export class WorldRepository {
     }
   }
 
-  nextQueueItem(characterId: string, now: number): QueueItem | undefined {
-    this.db
-      .update(characterQueue)
-      .set({ status: "pending" })
-      .where(
-        and(
-          eq(characterQueue.characterId, characterId),
-          eq(characterQueue.status, "processing"),
-          lte(characterQueue.notBefore, now),
-        ),
+  private dueQueueRow(characterId: string, now: number, kinds?: string[]) {
+    const kindFilter = kinds?.length
+      ? `AND kind IN (${kinds.map(() => "?").join(", ")})`
+      : "";
+    return this.sqlite
+      .prepare(
+        `SELECT * FROM character_queue
+         WHERE character_id = ? AND expires_at > ? AND not_before <= ?
+           AND status IN ('pending', 'processing') ${kindFilter}
+         ORDER BY priority DESC, created_at ASC LIMIT 1`,
       )
-      .run();
-    this.db
-      .update(characterQueue)
-      .set({ status: "expired" })
-      .where(
-        and(
-          eq(characterQueue.characterId, characterId),
-          eq(characterQueue.status, "pending"),
-          lte(characterQueue.expiresAt, now),
-        ),
-      )
-      .run();
-    const row = this.db
-      .select()
-      .from(characterQueue)
-      .where(
-        and(
-          eq(characterQueue.characterId, characterId),
-          eq(characterQueue.status, "pending"),
-          lte(characterQueue.notBefore, now),
-        ),
-      )
-      .orderBy(desc(characterQueue.priority), asc(characterQueue.createdAt))
-      .get();
+      .get(characterId, now, now, ...(kinds ?? [])) as
+      | {
+          id: string;
+          character_id: string;
+          kind: string;
+          payload: string;
+          priority: number;
+          not_before: number;
+          expires_at: number;
+        }
+      | undefined;
+  }
+
+  /** Read-only check so idle characters cost no writes. */
+  hasDueQueueItem(characterId: string, now: number, kinds?: string[]): boolean {
+    return this.dueQueueRow(characterId, now, kinds) !== undefined;
+  }
+
+  /**
+   * Claims the next due item. A `processing` item whose claim expired (its
+   * worker died) is claimable again.
+   */
+  nextQueueItem(
+    characterId: string,
+    now: number,
+    kinds?: string[],
+  ): QueueItem | undefined {
+    const row = this.dueQueueRow(characterId, now, kinds);
     if (!row) return undefined;
-    const claimed = this.db
-      .update(characterQueue)
-      .set({ status: "processing", notBefore: now + 120_000 })
-      .where(
-        and(
-          eq(characterQueue.id, row.id),
-          eq(characterQueue.status, "pending"),
-        ),
+    const claimed = this.sqlite
+      .prepare(
+        "UPDATE character_queue SET status = 'processing', not_before = ? WHERE id = ? AND (status = 'pending' OR (status = 'processing' AND not_before <= ?))",
       )
-      .run();
+      .run(now + QUEUE_LEASE_MS, row.id, now);
     if (claimed.changes !== 1) return undefined;
-    return { ...row, payload: JSON.parse(row.payload) };
+    return {
+      id: row.id,
+      characterId: row.character_id,
+      kind: row.kind,
+      payload: JSON.parse(row.payload) as Record<string, unknown>,
+      priority: row.priority,
+      notBefore: row.not_before,
+      expiresAt: row.expires_at,
+    };
   }
 
   completeQueueItem(id: string): void {
@@ -488,24 +643,60 @@ export class WorldRepository {
       .run();
   }
 
-  queueDepth(characterId?: string): number {
-    const row = characterId
-      ? this.db
-          .select({ count: sql<number>`count(*)` })
-          .from(characterQueue)
-          .where(
-            and(
-              eq(characterQueue.status, "pending"),
-              eq(characterQueue.characterId, characterId),
-            ),
-          )
-          .get()
-      : this.db
-          .select({ count: sql<number>`count(*)` })
-          .from(characterQueue)
-          .where(eq(characterQueue.status, "pending"))
-          .get();
-    return Number(row?.count ?? 0);
+  /** Put a claimed item back to run later. */
+  deferQueueItem(id: string, notBefore: number): void {
+    this.db
+      .update(characterQueue)
+      .set({ status: "pending", notBefore })
+      .where(eq(characterQueue.id, id))
+      .run();
+  }
+
+  /** Consumes a pending item by dedupe key and returns its payload. */
+  takeQueueItem(
+    characterId: string,
+    dedupeKey: string,
+  ): Record<string, unknown> | null {
+    const row = this.sqlite
+      .prepare(
+        "SELECT id, payload FROM character_queue WHERE character_id = ? AND dedupe_key = ? AND status = 'pending'",
+      )
+      .get(characterId, dedupeKey) as
+      { id: string; payload: string } | undefined;
+    if (!row) return null;
+    const result = this.sqlite
+      .prepare(
+        "UPDATE character_queue SET status = 'completed' WHERE id = ? AND status = 'pending'",
+      )
+      .run(row.id);
+    return result.changes === 1
+      ? (JSON.parse(row.payload) as Record<string, unknown>)
+      : null;
+  }
+
+  cancelQueueItems(dedupeKey: string): void {
+    this.sqlite
+      .prepare(
+        "UPDATE character_queue SET status = 'completed' WHERE dedupe_key = ? AND status = 'pending'",
+      )
+      .run(dedupeKey);
+  }
+
+  queueDepth(characterId?: string, now = Date.now()): number {
+    const row = (
+      characterId
+        ? this.sqlite
+            .prepare(
+              "SELECT count(*) AS count FROM character_queue WHERE status = 'pending' AND expires_at > ? AND character_id = ?",
+            )
+            .get(now, characterId)
+        : this.sqlite
+            .prepare(
+              "SELECT count(*) AS count FROM character_queue WHERE status = 'pending' AND expires_at > ?",
+            )
+            .get(now)
+    ) as { count: number };
+    return Number(row.count);
   }
 
   createConversation(aId: string, bId: string): ConversationRecord {
@@ -558,6 +749,59 @@ export class WorldRepository {
       .run();
   }
 
+  /** Atomic; returns the new count, or null if the conversation is not active. */
+  incrementConversationMessages(id: string): number | null {
+    const row = this.sqlite
+      .prepare(
+        "UPDATE conversations SET message_count = message_count + 1 WHERE id = ? AND status = 'active' RETURNING message_count AS messageCount",
+      )
+      .get(id) as { messageCount: number } | undefined;
+    return row?.messageCount ?? null;
+  }
+
+  /** Only the first caller wins, so two jobs cannot both end a conversation. */
+  markConversationEnded(id: string, reason: string): boolean {
+    return (
+      this.sqlite
+        .prepare(
+          "UPDATE conversations SET status = 'ended', ended_at = ?, termination_reason = ? WHERE id = ? AND status = 'active'",
+        )
+        .run(Date.now(), reason, id).changes === 1
+    );
+  }
+
+  addConversationMessage(input: {
+    conversationId: string;
+    speakerId: string | null;
+    speakerName: string;
+    text: string;
+  }): void {
+    this.db
+      .insert(conversationMessages)
+      .values({ id: crypto.randomUUID(), createdAt: Date.now(), ...input })
+      .run();
+  }
+
+  /** Chronological. With `limit`, the latest `limit` messages. */
+  listConversationMessages(
+    conversationId: string,
+    limit?: number,
+  ): ConversationMessage[] {
+    const rows = this.db
+      .select({
+        speakerId: conversationMessages.speakerId,
+        speakerName: conversationMessages.speakerName,
+        text: conversationMessages.text,
+        createdAt: conversationMessages.createdAt,
+      })
+      .from(conversationMessages)
+      .where(eq(conversationMessages.conversationId, conversationId))
+      .orderBy(desc(conversationMessages.createdAt))
+      .limit(limit ?? -1)
+      .all();
+    return rows.reverse();
+  }
+
   addMemory(input: {
     characterId: string;
     kind: "fact" | "impression";
@@ -595,6 +839,25 @@ export class WorldRepository {
       .run();
   }
 
+  memoriesFor(characterId: string, limit = 50): PublicMemory[] {
+    return this.db
+      .select({
+        id: memories.id,
+        kind: memories.kind,
+        bullet: memories.bullet,
+        subject: memories.subject,
+        confidence: memories.confidence,
+        createdAt: memories.createdAt,
+      })
+      .from(memories)
+      .where(
+        and(eq(memories.characterId, characterId), eq(memories.active, true)),
+      )
+      .orderBy(desc(memories.createdAt))
+      .limit(limit)
+      .all() as PublicMemory[];
+  }
+
   upsertRelationship(
     characterId: string,
     otherCharacterId: string,
@@ -621,82 +884,122 @@ export class WorldRepository {
       .run();
   }
 
-  listPublicCharacters(): PublicCharacter[] {
-    const rows = this.listCharacterRows();
-    const memoryRows = this.db
-      .select()
-      .from(memories)
-      .where(eq(memories.active, true))
-      .orderBy(desc(memories.createdAt))
-      .all();
-    const relationshipRows = this.db.select().from(relationships).all();
-    const names = new Map(rows.map((row) => [row.id, row.name]));
-    const memoriesByCharacter = new Map<string, PublicMemory[]>();
-    for (const memory of memoryRows) {
-      const item: PublicMemory = {
-        id: memory.id,
-        kind: memory.kind as "fact" | "impression",
-        bullet: memory.bullet,
-        subject: memory.subject,
-        confidence: memory.confidence,
-        createdAt: memory.createdAt,
-      };
-      const list = memoriesByCharacter.get(memory.characterId);
-      if (list) list.push(item);
-      else memoriesByCharacter.set(memory.characterId, [item]);
-    }
-    const relationshipsByCharacter = new Map<string, PublicRelationship[]>();
-    for (const relationship of relationshipRows) {
-      const item: PublicRelationship = {
-        characterId: relationship.otherCharacterId,
-        characterName: names.get(relationship.otherCharacterId) ?? "Unknown",
-        impression: relationship.impression,
-        affinity: relationship.affinity,
-      };
-      const list = relationshipsByCharacter.get(relationship.characterId);
-      if (list) list.push(item);
-      else relationshipsByCharacter.set(relationship.characterId, [item]);
-    }
+  relationshipsFor(characterId: string): PublicRelationship[] {
+    return this.sqlite
+      .prepare(
+        `SELECT r.other_character_id AS characterId, coalesce(c.name, 'Unknown') AS characterName,
+          r.impression AS impression, r.affinity AS affinity
+         FROM relationships r LEFT JOIN characters c ON c.id = r.other_character_id
+         WHERE r.character_id = ? ORDER BY r.affinity DESC, r.updated_at DESC`,
+      )
+      .all(characterId) as PublicRelationship[];
+  }
+
+  /** How warmly everyone else regards this character. */
+  private reputations(): Map<string, number> {
+    const rows = this.sqlite
+      .prepare(
+        "SELECT other_character_id AS id, sum(affinity) AS total FROM relationships GROUP BY other_character_id",
+      )
+      .all() as Array<{ id: string; total: number }>;
+    return new Map(rows.map((row) => [row.id, Number(row.total)]));
+  }
+
+  private snapshotTime(): number {
     const state = this.getWorldState();
-    const currentTime =
-      state.simulationPaused && state.pausedAt > 0
-        ? state.pausedAt
-        : Date.now();
-    return rows.map((row) => {
-      const publicMemories = memoriesByCharacter.get(row.id) ?? [];
-      const publicRelationships = relationshipsByCharacter.get(row.id) ?? [];
-      const position = this.positionAt(row, currentTime);
-      return {
-        id: row.id,
-        name: row.name,
-        personality: row.personality,
-        model: row.model,
-        dailyBudgetMicros: row.dailyBudgetMicros,
-        spentTodayMicros: row.spentTodayMicros,
-        decisionIntervalSeconds: row.decisionIntervalSeconds,
-        state: row.state as CharacterState,
-        x: position.x,
-        y: position.y,
-        targetX: row.targetX,
-        targetY: row.targetY,
-        intent: row.intent,
-        speech:
-          row.speechExpiresAt && row.speechExpiresAt > currentTime
-            ? row.speech
-            : null,
-        avatarUrl: row.avatarUrl,
-        avatarColor: row.avatarColor,
-        toolActive: row.toolActive,
-        reputation: publicRelationships.reduce(
-          (sum, relationship) => sum + relationship.affinity,
-          0,
-        ),
-        locationId: null,
-        memories: publicMemories,
-        relationships: publicRelationships,
-        updatedAt: row.updatedAt,
-      };
-    });
+    return state.simulationPaused && state.pausedAt > 0
+      ? state.pausedAt
+      : Date.now();
+  }
+
+  listPublicCharacters(): PublicCharacter[] {
+    const currentTime = this.snapshotTime();
+    const reputations = this.reputations();
+    return this.listCharacterRows().map((row) =>
+      this.toPublicCharacter(row, currentTime, reputations.get(row.id) ?? 0),
+    );
+  }
+
+  private toPublicCharacter(
+    row: CharacterRow,
+    currentTime: number,
+    reputation: number,
+  ): PublicCharacter {
+    const position = this.positionAt(row, currentTime);
+    return {
+      id: row.id,
+      name: row.name,
+      personality: row.personality,
+      model: row.model,
+      dailyBudgetMicros: row.dailyBudgetMicros,
+      spentTodayMicros: row.spentTodayMicros,
+      decisionIntervalSeconds: row.decisionIntervalSeconds,
+      state: row.state as CharacterState,
+      x: position.x,
+      y: position.y,
+      targetX: row.targetX,
+      targetY: row.targetY,
+      movementArrivesAt: Math.max(row.movementArrivesAt, row.movementStartedAt),
+      intent: row.intent,
+      speech:
+        row.speechExpiresAt && row.speechExpiresAt > currentTime
+          ? row.speech
+          : null,
+      avatarUrl: publicAvatarUrl(row.id, row.avatarUrl),
+      avatarColor: row.avatarColor,
+      toolActive: row.toolActive,
+      reputation,
+      locationId: locationAtPoint(position.x, position.y)?.id ?? null,
+      currentConversationId: row.currentConversationId,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  inspect(idOrName: string): CharacterInspect | null {
+    const row = this.getCharacter(idOrName);
+    if (!row) return null;
+    const publicCharacter = this.toPublicCharacter(
+      row,
+      this.snapshotTime(),
+      this.reputations().get(row.id) ?? 0,
+    );
+    return {
+      id: row.id,
+      name: row.name,
+      personality: row.personality,
+      model: row.model,
+      dailyBudgetMicros: row.dailyBudgetMicros,
+      spentTodayMicros: row.spentTodayMicros,
+      decisionIntervalSeconds: row.decisionIntervalSeconds,
+      reputation: publicCharacter.reputation,
+      locationId: publicCharacter.locationId,
+      memories: this.memoriesFor(row.id),
+      relationships: this.relationshipsFor(row.id),
+    };
+  }
+
+  avatarFor(idOrName: string): string | null {
+    return this.getCharacter(idOrName)?.avatarUrl ?? null;
+  }
+
+  addArtifact(input: Omit<WorldArtifact, "id" | "createdAt">): WorldArtifact {
+    const artifact: WorldArtifact = {
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      ...input,
+    };
+    this.db.insert(artifacts).values(artifact).run();
+    return artifact;
+  }
+
+  listArtifacts(limit = 20, locationId?: WorldLocationId): WorldArtifact[] {
+    const query = this.db.select().from(artifacts);
+    return (
+      locationId ? query.where(eq(artifacts.locationId, locationId)) : query
+    )
+      .orderBy(desc(artifacts.createdAt))
+      .limit(limit)
+      .all() as WorldArtifact[];
   }
 
   reserveCost(input: {
@@ -761,6 +1064,10 @@ export class WorldRepository {
     })();
   }
 
+  /**
+   * Records what the provider actually charged, even above the reservation:
+   * the money is spent either way, so the ledger must not understate it.
+   */
   settleCost(
     id: string,
     amountMicros: number,
@@ -774,33 +1081,19 @@ export class WorldRepository {
         .where(eq(costEntries.id, id))
         .get();
       if (!entry || entry.status !== "reserved") return;
-      const actual = Math.max(0, Math.min(amountMicros, entry.reservedMicros));
-      const release = entry.reservedMicros - actual;
-      const state = this.getWorldState();
-      this.db
-        .update(worldState)
-        .set({
-          serverSpentTodayMicros: Math.max(
-            0,
-            state.serverSpentTodayMicros - release,
-          ),
-        })
-        .where(eq(worldState.id, 1))
-        .run();
-      if (entry.characterId && entry.category !== "avatar") {
-        const character = this.getCharacter(entry.characterId);
-        if (character)
-          this.db
-            .update(characters)
-            .set({
-              spentTodayMicros: Math.max(
-                0,
-                character.spentTodayMicros - release,
-              ),
-            })
-            .where(eq(characters.id, character.id))
-            .run();
-      }
+      const actual = Math.max(0, Math.round(amountMicros));
+      const delta = actual - entry.reservedMicros;
+      this.sqlite
+        .prepare(
+          "UPDATE world_state SET server_spent_today_micros = max(0, server_spent_today_micros + ?) WHERE id = 1",
+        )
+        .run(delta);
+      if (entry.characterId && entry.category !== "avatar")
+        this.sqlite
+          .prepare(
+            "UPDATE characters SET spent_today_micros = max(0, spent_today_micros + ?) WHERE id = ?",
+          )
+          .run(delta, entry.characterId);
       this.db
         .update(costEntries)
         .set({
@@ -823,13 +1116,52 @@ export class WorldRepository {
       .run();
   }
 
-  listCosts() {
+  listCosts(limit = 200) {
     return this.db
       .select()
       .from(costEntries)
       .orderBy(desc(costEntries.createdAt))
-      .limit(200)
+      .limit(limit)
       .all();
+  }
+
+  /** Drops history nothing reads any more. Safe to run at any time. */
+  prune(now = Date.now()): void {
+    this.sqlite.transaction(() => {
+      this.sqlite
+        .prepare(
+          "DELETE FROM cost_entries WHERE created_at < ? AND status != 'reserved'",
+        )
+        .run(now - 7 * DAY_MS);
+      this.sqlite
+        .prepare(
+          "DELETE FROM character_queue WHERE (status = 'completed' AND created_at < ?) OR (status = 'pending' AND expires_at < ?)",
+        )
+        .run(now - HOUR_MS, now - HOUR_MS);
+      this.sqlite
+        .prepare(
+          "DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE status = 'ended' AND ended_at < ?)",
+        )
+        .run(now - 30 * DAY_MS);
+      this.sqlite
+        .prepare(
+          "DELETE FROM conversations WHERE status = 'ended' AND ended_at < ?",
+        )
+        .run(now - 30 * DAY_MS);
+      this.sqlite
+        .prepare("DELETE FROM memories WHERE active = 0 AND created_at < ?")
+        .run(now - DAY_MS);
+      this.sqlite
+        .prepare(
+          "DELETE FROM world_events WHERE created_at < (SELECT created_at FROM world_events ORDER BY created_at DESC LIMIT 1 OFFSET ?)",
+        )
+        .run(EVENT_RETENTION - 1);
+      this.sqlite
+        .prepare(
+          "DELETE FROM artifacts WHERE created_at < (SELECT created_at FROM artifacts ORDER BY created_at DESC LIMIT 1 OFFSET ?)",
+        )
+        .run(ARTIFACT_RETENTION - 1);
+    })();
   }
 
   resetWorld(): void {
@@ -838,9 +1170,11 @@ export class WorldRepository {
         characterQueue,
         relationships,
         memories,
+        conversationMessages,
         conversations,
         worldEvents,
         costEntries,
+        artifacts,
         characters,
       ]) {
         this.db.delete(table).run();

@@ -174,7 +174,7 @@ describe("PaidServices OpenRouter LLM path", () => {
     );
   });
 
-  it("throws on 401/402/429, releases the reservation, and hides the key", async () => {
+  it("falls back on 401/402/429, releases the reservation, and hides the key", async () => {
     for (const status of [401, 402, 429]) {
       const releaseCost = vi.fn();
       const settleCost = vi.fn();
@@ -191,41 +191,47 @@ describe("PaidServices OpenRouter LLM path", () => {
         loadConfig({ OPENROUTER_API_KEY: KEY }),
         { fetch: fetchMock },
       );
-      await expect(services.decide(context)).rejects.toSatisfy(
-        (error: unknown) => {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          return (
-            message.includes(`OpenRouter ${status}:`) && !message.includes(KEY)
-          );
-        },
-      );
+      const result = await services.decide(context);
+      expect(result.degraded).toBe(true);
+      expect(result.costMicros).toBe(0);
+      expect(result.value.intent.length).toBeGreaterThan(0);
+      const failure = services.lastFailure()!;
+      expect(failure.message).toContain(`OpenRouter ${status}:`);
+      expect(failure.message).not.toContain(KEY);
       expect(releaseCost).toHaveBeenCalled();
       expect(settleCost).not.toHaveBeenCalled();
     }
   });
 
-  it("uses the deterministic fallback when no key is set and never fetches", async () => {
+  it("asks OpenRouter to include usage so cost can be settled", async () => {
+    let body: Record<string, unknown> = {};
+    const client = new OpenRouterClient({
+      apiKey: KEY,
+      fetch: async (_input, init) => {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse(200, { choices: [] });
+      },
+    });
+    await client.chat({ model: "m" });
+    expect(body.usage).toEqual({ include: true });
+  });
+
+  it("uses the keyless brain when no key is set: no fetch, no ledger", async () => {
     const fetchMock = vi.fn();
-    const settleCost = vi.fn();
     const repo = {
       reserveCost: vi.fn(() => "reservation"),
-      settleCost,
+      settleCost: vi.fn(),
       releaseCost: vi.fn(),
     } as unknown as WorldStore;
     const services = createServices(repo, loadConfig({}), { fetch: fetchMock });
     const result = await services.decide(context);
-    expect(result.value.action).toBe("move");
+    expect(result.costMicros).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(settleCost).toHaveBeenCalledWith(
-      "reservation",
-      250,
-      { mode: "deterministic" },
-      expect.any(Number),
-    );
+    expect(repo.reserveCost).not.toHaveBeenCalled();
+    expect(repo.settleCost).not.toHaveBeenCalled();
   });
 
-  it("pauses after two failures without calling fetch during the cooldown", async () => {
+  it("pauses after two failures and keeps falling back without fetching during the cooldown", async () => {
     let now = 10_000;
     const fetchMock = vi.fn(async () =>
       jsonResponse(500, { error: { message: "boom" } }),
@@ -239,9 +245,9 @@ describe("PaidServices OpenRouter LLM path", () => {
       loadConfig({ OPENROUTER_API_KEY: KEY }),
       { fetch: fetchMock, now: () => now },
     );
-    await expect(services.decide(context)).rejects.toThrow("OpenRouter 500:");
-    await expect(services.decide(context)).rejects.toThrow("OpenRouter 500:");
-    await expect(services.decide(context)).rejects.toThrow(
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      expect((await services.decide(context)).degraded).toBe(true);
+    expect(services.lastFailure()?.message).toContain(
       "OpenRouter paused after repeated failures",
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);

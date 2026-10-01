@@ -3,31 +3,50 @@ import type {
   DirectiveInput,
   UpdateCharacterInput,
   WorldEvent,
+  WorldLocationId,
+  WorldRecap,
   WorldSnapshot,
 } from "@agent-world/shared";
 import {
+  BUDGET_SLEEP_INTENT,
   LOCATION_WAYPOINTS,
   WORLD_HEIGHT,
   WORLD_LOCATIONS,
   WORLD_WIDTH,
+  locationAtPoint,
+  locationName,
   nameColor,
+  placeInSentence,
 } from "@agent-world/shared";
-import type { WorldStore } from "@agent-world/db";
+import type { CharacterRow, WorldStore } from "@agent-world/db";
 import {
+  BudgetExhaustedError,
   PaidServices,
   type AgentContext,
   type AgentDecision,
 } from "./services.js";
-import { decisionDelayMs } from "./config.js";
+import { DEFAULT_REACTION_COOLDOWN_MS, decisionDelayMs } from "./config.js";
+import {
+  conversationOpener,
+  inspectionDetail,
+  type Random,
+} from "./deterministic.js";
 
 const MOVE_SPEED_PER_SECOND = 92;
 const CONVERSATION_DISTANCE = 78;
 const CONVERSATION_SPACING = 64;
-const CONVERSATION_LIMIT = 20;
+export const CONVERSATION_LIMIT = 20;
 const CONVERSATION_MAX_MS = 10 * 60_000;
 const CONVERSATION_RESTART_COOLDOWN_MS = 2 * 60_000;
 const QUEUE_EXPIRY_MS = 30 * 60_000;
-const BUDGET_SLEEP_INTENT = "Sleeping until the daily budget resets";
+const TURN_RETRY_MS = 3_000;
+const DIRECTIVE_RETRY_MS = 2_000;
+const MAX_TURN_ATTEMPTS = 2;
+const PERSONALITY_LIMIT = 800;
+const OWNER_UPDATE_PREFIX = "\nOwner update: ";
+/** Queue kinds a character handles while it is in a conversation. */
+const CONVERSATION_KINDS = ["conversation_turn", "owner_directive"];
+
 const CHARACTER_BOUNDS = {
   left: 45,
   right: WORLD_WIDTH - 45,
@@ -56,19 +75,105 @@ const event = (input: Omit<WorldEvent, "id" | "createdAt">): WorldEvent => ({
   ...input,
 });
 
+const turnKey = (conversationId: string) => `turn:${conversationId}`;
+
+export const isBudgetSleeping = (character: CharacterRow) =>
+  character.state === "sleeping" && character.intent === BUDGET_SLEEP_INTENT;
+
+/** Free to be pulled into a new conversation right now. */
+export const isAvailableForConversation = (character: CharacterRow) =>
+  !character.paused &&
+  character.state !== "sleeping" &&
+  character.state !== "paused" &&
+  !character.currentConversationId;
+
+/** Keeps the base personality and as many of the newest owner updates as fit. */
+export function appendPersonalityUpdate(
+  personality: string,
+  update: string,
+): string {
+  const [base = "", ...updates] = personality.split(OWNER_UPDATE_PREFIX);
+  updates.push(update.trim());
+  const join = (items: string[]) => [base, ...items].join(OWNER_UPDATE_PREFIX);
+  while (updates.length > 1 && join(updates).length > PERSONALITY_LIMIT)
+    updates.shift();
+  const joined = join(updates);
+  if (joined.length <= PERSONALITY_LIMIT) return joined;
+  const tail = `${OWNER_UPDATE_PREFIX}${updates[0]}`.slice(
+    0,
+    PERSONALITY_LIMIT - 10,
+  );
+  return `${base.slice(0, PERSONALITY_LIMIT - tail.length)}${tail}`;
+}
+
+const STARTER_CAST: CreateCharacterInput[] = [
+  {
+    name: "Juniper",
+    personality:
+      "Playful and observant, always collecting unusual stories and asking one question too many.",
+    model: "z-ai/glm-5.3-flash",
+    dailyBudgetMicros: 250_000,
+    decisionIntervalSeconds: 60,
+    firstMission: "meet",
+  },
+  {
+    name: "Moss",
+    personality:
+      "Quiet, patient and slightly obsessed with tiny gardens; happiest in the park.",
+    model: "z-ai/glm-5.3-flash",
+    dailyBudgetMicros: 250_000,
+    decisionIntervalSeconds: 60,
+    firstMission: "explore",
+  },
+  {
+    name: "Tinker",
+    personality:
+      "Restless maker who leaves notes and odd little objects everywhere, curious what others will make of them.",
+    model: "z-ai/glm-5.3-flash",
+    dailyBudgetMicros: 250_000,
+    decisionIntervalSeconds: 60,
+    firstMission: "explore",
+  },
+];
+
+export interface WorldEngineOptions {
+  /** Applied at construction; the stored world speed is used afterwards. */
+  decisionScale?: number;
+  reactionCooldownMs?: number;
+  random?: Random;
+}
+
 export class WorldEngine {
   private readonly services: PaidServices;
-  private readonly decisionScale: number;
+  private readonly reactionCooldownMs: number;
+  private readonly random: Random;
 
   constructor(
     readonly repository: WorldStore,
     private readonly changed: () => void = () => {},
     services?: PaidServices,
-    options: { decisionScale?: number } = {},
+    options: WorldEngineOptions = {},
   ) {
     this.services = services ?? new PaidServices(repository);
-    this.decisionScale = options.decisionScale ?? 1;
+    this.reactionCooldownMs =
+      options.reactionCooldownMs ?? DEFAULT_REACTION_COOLDOWN_MS;
+    this.random = options.random ?? Math.random;
+    if (options.decisionScale !== undefined)
+      repository.setDecisionScale(options.decisionScale);
     this.recoverOffMapCharacters();
+  }
+
+  private scale(): number {
+    return this.repository.getWorldState().decisionScale;
+  }
+
+  private decisionDelay(intervalSeconds: number): number {
+    return decisionDelayMs(intervalSeconds, this.scale());
+  }
+
+  /** Conversation pace and reaction cooldown follow the world speed. */
+  private reactionDelay(): number {
+    return Math.round(this.reactionCooldownMs / this.scale());
   }
 
   private recoverOffMapCharacters(): void {
@@ -104,13 +209,29 @@ export class WorldEngine {
     targetX: number,
     targetY: number,
     intent: string,
-  ): void {
+  ): number | null {
     const target = clampPosition({ x: targetX, y: targetY });
-    this.repository.startMovement(
+    return this.repository.startMovement(
       characterId,
       target.x,
       target.y,
       MOVE_SPEED_PER_SECOND,
+      intent,
+    );
+  }
+
+  private moveToLocation(
+    characterId: string,
+    locationId: WorldLocationId,
+    intent: string,
+  ): number | null {
+    const waypoints = LOCATION_WAYPOINTS[locationId];
+    const target =
+      waypoints[Math.floor(this.random() * waypoints.length)] ?? waypoints[0]!;
+    return this.startMovement(
+      characterId,
+      target.x + (this.random() - 0.5) * 22,
+      target.y + (this.random() - 0.5) * 16,
       intent,
     );
   }
@@ -130,43 +251,49 @@ export class WorldEngine {
     const currentDistance = Math.hypot(dx, dy);
     const directionX = currentDistance > 0 ? dx / currentDistance : 1;
     const directionY = currentDistance > 0 ? dy / currentDistance : 0;
-    this.startMovement(
+    return this.startMovement(
       character.id,
       otherPosition.x + directionX * CONVERSATION_SPACING,
       otherPosition.y + directionY * CONVERSATION_SPACING,
       intent,
     );
-    return (
-      this.repository.getCharacter(character.id)?.movementArrivesAt ?? null
-    );
   }
 
-  snapshot(connectedViewers = 0): WorldSnapshot {
+  snapshot(): WorldSnapshot {
     const state = this.repository.getWorldState();
     return {
       characters: this.repository.listPublicCharacters(),
       events: this.repository.listEvents(),
       locations: WORLD_LOCATIONS,
-      artifacts: [],
+      artifacts: this.repository.listArtifacts(),
       simulationPaused: state.simulationPaused,
       serverSpentTodayMicros: state.serverSpentTodayMicros,
       serverDailyBudgetMicros: state.serverDailyBudgetMicros,
       budgetDate: state.budgetDate,
-      connectedViewers,
-      generatedAt: Date.now(),
+      decisionScale: state.decisionScale,
+      brain: this.services.brain(),
+      generatedAt:
+        state.simulationPaused && state.pausedAt > 0
+          ? state.pausedAt
+          : Date.now(),
     };
+  }
+
+  recap(since: number): WorldRecap {
+    return this.repository.recap(since);
   }
 
   async createCharacter(input: CreateCharacterInput) {
     if (this.repository.getCharacter(input.name))
       throw new Error("That name already lives in Agent World");
     const now = Date.now();
-    const plazaWaypoints = LOCATION_WAYPOINTS.plaza!;
+    const plazaWaypoints = LOCATION_WAYPOINTS.plaza;
     const spawn =
-      plazaWaypoints[Math.floor(Math.random() * plazaWaypoints.length)]!;
+      plazaWaypoints[Math.floor(this.random() * plazaWaypoints.length)] ??
+      plazaWaypoints[0]!;
     const id = crypto.randomUUID();
-    const x = spawn.x + (Math.random() - 0.5) * 24;
-    const y = spawn.y + (Math.random() - 0.5) * 18;
+    const x = spawn.x + (this.random() - 0.5) * 24;
+    const y = spawn.y + (this.random() - 0.5) * 18;
     this.repository.createCharacter({
       id,
       name: input.name,
@@ -176,7 +303,7 @@ export class WorldEngine {
       spentTodayMicros: 0,
       budgetDate: this.repository.getWorldState().budgetDate,
       decisionIntervalSeconds: input.decisionIntervalSeconds,
-      nextDecisionAt: now + decisionDelayMs(4, this.decisionScale),
+      nextDecisionAt: now + this.decisionDelay(4),
       lastReactionAt: 0,
       state: input.firstMission === "meet" ? "waiting" : "active",
       x,
@@ -203,7 +330,7 @@ export class WorldEngine {
         characterName: input.name,
         targetCharacterId: null,
         summary: `${input.name} arrived in Agent World.`,
-        detail: "Arrived.",
+        detail: null,
       }),
     );
     this.repository.enqueue({
@@ -216,8 +343,7 @@ export class WorldEngine {
       expiresAt: now + QUEUE_EXPIRY_MS,
     });
     for (const other of this.repository.listCharacterRows()) {
-      if (other.id === id || other.currentConversationId || other.paused)
-        continue;
+      if (other.id === id || !isAvailableForConversation(other)) continue;
       this.repository.enqueue({
         characterId: other.id,
         kind: "new_character",
@@ -231,6 +357,17 @@ export class WorldEngine {
     this.changed();
     void this.generateAvatar(id);
     return this.repository.getCharacter(id)!;
+  }
+
+  /** Adds the starter characters whose names are still free. */
+  async seedStarterCast(): Promise<number> {
+    let created = 0;
+    for (const input of STARTER_CAST) {
+      if (this.repository.getCharacter(input.name)) continue;
+      await this.createCharacter(input);
+      created += 1;
+    }
+    return created;
   }
 
   async regenerateAvatar(idOrName: string): Promise<void> {
@@ -252,6 +389,7 @@ export class WorldEngine {
         this.repository.updateCharacter(character.id, {
           avatarUrl: result.value,
         });
+      else if (result.degraded) throw new Error("Avatar generation failed");
     } catch (error) {
       this.repository.addEvent(
         event({
@@ -270,19 +408,52 @@ export class WorldEngine {
   updateCharacter(idOrName: string, input: UpdateCharacterInput): void {
     const character = this.repository.getCharacter(idOrName);
     if (!character) throw new Error("Character not found");
-    const patch: Record<string, unknown> = { ...input };
-    if (typeof input.paused === "boolean") {
-      patch.state = input.paused ? "paused" : "active";
-      patch.intent = input.paused ? "Paused by owner" : "Waking up";
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (value !== undefined && character[key as keyof CharacterRow] !== value)
+        patch[key] = value;
+    }
+    if (Object.keys(patch).length === 0) return;
+    if (typeof patch.paused === "boolean") {
+      patch.state = patch.paused ? "paused" : "active";
+      patch.intent = patch.paused ? "Paused by owner" : "Waking up";
+      if (patch.paused && character.currentConversationId)
+        void this.endConversation(
+          character.currentConversationId,
+          `${character.name} was paused`,
+        );
     }
     this.repository.updateCharacter(character.id, patch);
+    if (typeof patch.decisionIntervalSeconds === "number")
+      this.repository.updateCharacter(character.id, {
+        nextDecisionAt: Math.min(
+          character.nextDecisionAt,
+          Date.now() + this.decisionDelay(patch.decisionIntervalSeconds),
+        ),
+      });
+    const changes = Object.keys(patch).filter(
+      (key) => key !== "state" && key !== "intent",
+    );
     this.repository.addEvent(
       event({
         kind: "owner",
         characterId: character.id,
         characterName: character.name,
         targetCharacterId: null,
-        summary: `${character.name}'s owner updated their settings.`,
+        summary:
+          patch.paused === true
+            ? `${character.name} was paused by their owner.`
+            : patch.paused === false
+              ? `${character.name} was resumed by their owner.`
+              : `${character.name}'s owner changed their ${changes
+                  .map((key) =>
+                    key === "dailyBudgetMicros"
+                      ? "budget"
+                      : key === "decisionIntervalSeconds"
+                        ? "pace"
+                        : key,
+                  )
+                  .join(" and ")}.`,
         detail: null,
       }),
     );
@@ -293,9 +464,9 @@ export class WorldEngine {
     const character = this.repository.getCharacter(idOrName);
     if (!character) throw new Error("Character not found");
     if (input.mode === "personality") {
-      const personality =
-        `${character.personality}\nOwner update: ${input.text}`.slice(0, 800);
-      this.repository.updateCharacter(character.id, { personality });
+      this.repository.updateCharacter(character.id, {
+        personality: appendPersonalityUpdate(character.personality, input.text),
+      });
       this.repository.addEvent(
         event({
           kind: "owner",
@@ -303,7 +474,7 @@ export class WorldEngine {
           characterName: character.name,
           targetCharacterId: null,
           summary: `${character.name}'s personality was updated.`,
-          detail: null,
+          detail: input.text,
         }),
       );
     } else {
@@ -334,7 +505,10 @@ export class WorldEngine {
     const character = this.repository.getCharacter(idOrName);
     if (!character) throw new Error("Character not found");
     if (character.currentConversationId)
-      this.endConversation(character.currentConversationId, "character left");
+      void this.endConversation(
+        character.currentConversationId,
+        `${character.name} left`,
+      );
     this.repository.deleteCharacter(character.id);
     this.repository.addEvent(
       event({
@@ -350,33 +524,53 @@ export class WorldEngine {
   }
 
   setSimulationPaused(paused: boolean): void {
-    this.repository.setSimulationPaused(paused);
-    this.repository.addEvent(
-      event({
-        kind: "system",
-        characterId: null,
-        characterName: null,
-        targetCharacterId: null,
-        summary: paused ? "The world is paused." : "The world is moving again.",
-        detail: null,
-      }),
+    if (!this.repository.setSimulationPaused(paused)) return;
+    this.systemEvent(
+      paused ? "The world is paused." : "The world is moving again.",
     );
     this.changed();
   }
 
   setServerDailyBudgetMicros(serverDailyBudgetMicros: number): void {
+    if (
+      this.repository.getWorldState().serverDailyBudgetMicros ===
+      serverDailyBudgetMicros
+    )
+      return;
     this.repository.setServerDailyBudgetMicros(serverDailyBudgetMicros);
+    this.systemEvent(
+      `The world budget is now $${(serverDailyBudgetMicros / 1_000_000).toFixed(2)} per day.`,
+    );
+    this.changed();
+  }
+
+  setDecisionScale(decisionScale: number): void {
+    if (this.scale() === decisionScale) return;
+    this.repository.setDecisionScale(decisionScale);
+    const now = Date.now();
+    for (const character of this.repository.listCharacterRows()) {
+      this.repository.updateCharacter(character.id, {
+        nextDecisionAt: Math.min(
+          character.nextDecisionAt,
+          now + this.decisionDelay(character.decisionIntervalSeconds),
+        ),
+      });
+    }
+    this.systemEvent(`The world now runs at ${decisionScale}× speed.`);
+    this.changed();
+  }
+
+  private systemEvent(summary: string): void {
     this.repository.addEvent(
       event({
         kind: "system",
         characterId: null,
         characterName: null,
         targetCharacterId: null,
-        summary: `The world budget is now $${(serverDailyBudgetMicros / 1_000_000).toFixed(2)} per day.`,
+        summary,
         detail: null,
       }),
     );
-    this.changed();
   }
 
   resetWorld(): void {
@@ -386,9 +580,11 @@ export class WorldEngine {
 
   adminState() {
     return {
+      brain: this.services.brain(),
       liveMpp: this.services.isLive(),
+      lastFailure: this.services.lastFailure(),
       queueDepth: this.repository.queueDepth(),
-      costs: this.repository.listCosts(),
+      costs: this.repository.listCosts(50),
       world: this.repository.getWorldState(),
       inFlight: this.repository.activeLeases(),
     };
@@ -400,32 +596,43 @@ export class WorldEngine {
     const worldState = this.repository.getWorldState();
     if (worldState.simulationPaused) return;
     const now = Date.now();
-    const reactionCooldown = Number(
-      process.env.AGENT_WORLD_REACTION_COOLDOWN_MS ?? 10_000,
-    );
+    const budgeted = this.services.isBudgeted();
+    const serverOverBudget =
+      budgeted &&
+      worldState.serverSpentTodayMicros >= worldState.serverDailyBudgetMicros;
+    const reactionDelay = this.reactionDelay();
     const jobs: Promise<void>[] = [];
+    let housekeeping = false;
     for (const character of this.repository.listCharacterRows()) {
       if (character.paused) continue;
-      if (
-        character.state === "sleeping" &&
-        character.intent === BUDGET_SLEEP_INTENT
-      )
-        continue;
-      if (
-        character.spentTodayMicros >= character.dailyBudgetMicros ||
-        worldState.serverSpentTodayMicros >= worldState.serverDailyBudgetMicros
-      ) {
+      const overBudget =
+        serverOverBudget ||
+        (budgeted && character.spentTodayMicros >= character.dailyBudgetMicros);
+      if (isBudgetSleeping(character)) {
+        if (overBudget) continue;
+        this.wakeFromBudgetSleep(character);
+        housekeeping = true;
+      } else if (overBudget) {
         this.putToBudgetSleep(character.id);
+        housekeeping = true;
         continue;
       }
+
+      let inConversation = false;
       if (character.currentConversationId) {
         const conversation = this.repository.getConversation(
           character.currentConversationId,
         );
-        if (
-          conversation &&
-          (conversation.messageCount >= CONVERSATION_LIMIT ||
-            now - conversation.startedAt >= CONVERSATION_MAX_MS)
+        if (!conversation || conversation.status !== "active") {
+          this.repository.updateCharacter(character.id, {
+            currentConversationId: null,
+            state: "active",
+            speech: null,
+          });
+          housekeeping = true;
+        } else if (
+          conversation.messageCount >= CONVERSATION_LIMIT ||
+          now - conversation.startedAt >= CONVERSATION_MAX_MS
         ) {
           const lease = this.repository.claimCharacter(character.id);
           if (lease)
@@ -440,12 +647,23 @@ export class WorldEngine {
               ),
             );
           continue;
+        } else {
+          inConversation = true;
         }
       }
-      if (now - character.lastReactionAt >= reactionCooldown) {
+
+      const kinds = inConversation ? CONVERSATION_KINDS : undefined;
+      if (
+        now - character.lastReactionAt >= reactionDelay &&
+        this.repository.hasDueQueueItem(character.id, now, kinds)
+      ) {
         const lease = this.repository.claimCharacter(character.id);
         if (lease) {
-          const queueItem = this.repository.nextQueueItem(character.id, now);
+          const queueItem = this.repository.nextQueueItem(
+            character.id,
+            now,
+            kinds,
+          );
           if (queueItem) {
             jobs.push(
               this.handleQueueItem(character.id, queueItem).finally(() =>
@@ -457,7 +675,7 @@ export class WorldEngine {
           this.repository.releaseCharacter(character.id, lease);
         }
       }
-      if (!character.currentConversationId && now >= character.nextDecisionAt) {
+      if (!inConversation && now >= character.nextDecisionAt) {
         const lease = this.repository.claimCharacter(character.id);
         if (lease)
           jobs.push(
@@ -468,7 +686,7 @@ export class WorldEngine {
       }
     }
     await Promise.allSettled(jobs);
-    if (jobs.length) this.changed();
+    if (jobs.length || housekeeping) this.changed();
   }
 
   private buildContext(
@@ -476,83 +694,76 @@ export class WorldEngine {
     extra?: Partial<AgentContext>,
   ): AgentContext {
     const character = this.repository.getCharacter(characterId)!;
-    const publicCharacters = this.repository.listPublicCharacters();
-    const self = publicCharacters.find((item) => item.id === characterId)!;
-    const nearestLocation = [...WORLD_LOCATIONS].sort((a, b) => {
-      const aDistance = distance(self, {
-        x: a.x + a.width / 2,
-        y: a.y + a.height / 2,
-      });
-      const bDistance = distance(self, {
-        x: b.x + b.width / 2,
-        y: b.y + b.height / 2,
-      });
-      return aDistance - bDistance;
-    })[0]!;
-    const insideNearest =
-      self.x >= nearestLocation.x &&
-      self.x <= nearestLocation.x + nearestLocation.width &&
-      self.y >= nearestLocation.y &&
-      self.y <= nearestLocation.y + nearestLocation.height;
-    const relevantEvents = this.repository
-      .listEvents()
-      .filter(
-        (item) =>
-          item.kind !== "conversation" &&
-          item.kind !== "system" &&
-          (item.characterId === characterId ||
-            item.targetCharacterId === characterId),
-      )
-      .slice(0, 5)
-      .map((item) => item.summary);
+    const now = Date.now();
+    const self = this.repository.positionAt(character, now);
+    const nearestLocation =
+      locationAtPoint(self.x, self.y) ??
+      [...WORLD_LOCATIONS].sort(
+        (a, b) =>
+          distance(self, { x: a.x + a.width / 2, y: a.y + a.height / 2 }) -
+          distance(self, { x: b.x + b.width / 2, y: b.y + b.height / 2 }),
+      )[0]!;
+    const inside = locationAtPoint(self.x, self.y) !== undefined;
     return {
       id: character.id,
       name: character.name,
       personality: character.personality,
       model: character.model,
       intent: character.intent,
-      position: {
-        x: Math.round(self.x),
-        y: Math.round(self.y),
-      },
+      position: { x: Math.round(self.x), y: Math.round(self.y) },
       area: {
         id: nearestLocation.id,
         name: nearestLocation.name,
         description: nearestLocation.description,
-        proximity: insideNearest ? "inside" : "near",
+        proximity: inside ? "inside" : "near",
       },
       locations: WORLD_LOCATIONS.map((location) => ({
         id: location.id,
         name: location.name,
         description: location.description,
       })),
-      nearby: publicCharacters
+      nearby: this.repository
+        .listCharacterRows()
         .filter((item) => item.id !== characterId)
         .map((item) => ({
           id: item.id,
           name: item.name,
-          distance: distance(self, item),
+          distance: Math.round(
+            distance(self, this.repository.positionAt(item, now)),
+          ),
           state: item.state,
-          locationId: item.locationId ?? null,
+          locationId: this.repository.locationOf(item, now),
         }))
         .sort((a, b) => a.distance - b.distance),
-      memories: (self.memories ?? []).slice(0, 12).map((memory) => ({
+      memories: this.repository.memoriesFor(characterId, 12).map((memory) => ({
         kind: memory.kind,
         bullet: memory.bullet,
         subject: memory.subject,
       })),
-      relationships: (self.relationships ?? []).map((item) => ({
-        name: item.characterName,
-        impression: item.impression,
-        affinity: item.affinity,
-      })),
-      recentEvents: relevantEvents,
+      relationships: this.repository
+        .relationshipsFor(characterId)
+        .map((item) => ({
+          name: item.characterName,
+          impression: item.impression,
+          affinity: item.affinity,
+        })),
+      recentEvents: this.repository
+        .eventsFor(characterId, 5)
+        .map((item) => item.summary),
+      notesHere: this.repository
+        .listArtifacts(3, nearestLocation.id)
+        .map((artifact) => artifact.title),
       capabilities: [
         "Move to or inspect a listed location",
         "Approach and talk with another listed character",
-        "Search the public web when a concrete question requires outside information",
+        "Make or leave a note at the Tinker Shed",
+        ...(this.services.canSearchWeb()
+          ? [
+              "Search the public web when a concrete question requires outside information",
+            ]
+          : []),
         "Form concise structured memories after a completed conversation",
-        "Cannot build, alter the map, acquire possessions, or use unlisted tools yet",
+        "Cannot alter the map, acquire possessions, or use unlisted tools",
       ],
       ...extra,
     };
@@ -571,8 +782,7 @@ export class WorldEngine {
       if (latest)
         this.repository.updateCharacter(characterId, {
           nextDecisionAt:
-            Date.now() +
-            decisionDelayMs(latest.decisionIntervalSeconds, this.decisionScale),
+            Date.now() + this.decisionDelay(latest.decisionIntervalSeconds),
         });
       this.changed();
     }
@@ -585,34 +795,25 @@ export class WorldEngine {
     try {
       const character = this.repository.getCharacter(characterId);
       if (!character) return;
-      if (item.kind === "owner_directive" && character.currentConversationId) {
-        const conversation = this.repository.getConversation(
-          character.currentConversationId,
+      const conversationId = character.currentConversationId;
+      if (item.kind === "owner_directive" && conversationId) {
+        const turn = this.repository.takeQueueItem(
+          characterId,
+          turnKey(conversationId),
         );
-        if (conversation?.status === "active") {
-          const otherId =
-            conversation.characterAId === characterId
-              ? conversation.characterBId
-              : conversation.characterAId;
-          const other = this.repository.getCharacter(otherId);
-          if (other) {
-            const previous =
-              this.repository
-                .listEvents()
-                .find(
-                  (candidate) =>
-                    candidate.detail ===
-                    `conversation:${character.currentConversationId}`,
-                )?.summary ?? "Continue the current conversation.";
-            await this.runConversationTurn(
-              characterId,
-              conversation.id,
-              other.name,
-              previous,
-              String(item.payload.text ?? ""),
-            );
-          }
+        if (!turn) {
+          // The partner holds the turn; speak on our next one.
+          this.repository.deferQueueItem(
+            item.id,
+            Date.now() + DIRECTIVE_RETRY_MS,
+          );
+          return;
         }
+        await this.runConversationTurn(characterId, {
+          ...turn,
+          conversationId,
+          directive: String(item.payload.text ?? ""),
+        });
       } else if (item.kind === "start_conversation") {
         await this.tryStartConversation(
           characterId,
@@ -622,18 +823,14 @@ export class WorldEngine {
             : undefined,
         );
       } else if (item.kind === "conversation_turn") {
-        await this.runConversationTurn(
+        await this.runConversationTurn(characterId, item.payload);
+      } else if (item.kind === "inspect_arrival") {
+        this.recordInspection(
           characterId,
-          String(item.payload.conversationId ?? ""),
-          String(item.payload.fromName ?? ""),
-          String(item.payload.previous ?? ""),
-          typeof item.payload.directive === "string"
-            ? item.payload.directive
-            : undefined,
-          typeof item.payload.conversationPurpose === "string"
-            ? item.payload.conversationPurpose
-            : undefined,
+          String(item.payload.locationId) as WorldLocationId,
         );
+      } else if (item.kind === "leave_artifact") {
+        await this.leaveArtifact(characterId);
       } else {
         const directive =
           item.kind === "owner_directive"
@@ -641,7 +838,10 @@ export class WorldEngine {
             : undefined;
         const context = this.buildContext(characterId, {
           directive,
-          event: { kind: item.kind, payload: item.payload },
+          event:
+            item.kind === "owner_directive"
+              ? undefined
+              : { kind: item.kind, payload: item.payload },
         });
         const result = await this.services.decide(context);
         await this.applyDecision(characterId, result.value);
@@ -652,30 +852,56 @@ export class WorldEngine {
         lastReactionAt: Date.now(),
         nextDecisionAt:
           Date.now() +
-          decisionDelayMs(
-            latest?.decisionIntervalSeconds ?? 60,
-            this.decisionScale,
-          ),
+          this.decisionDelay(latest?.decisionIntervalSeconds ?? 60),
       });
     } catch (error) {
       this.repository.completeQueueItem(item.id);
+      if (
+        item.kind === "conversation_turn" &&
+        !(error instanceof BudgetExhaustedError)
+      )
+        await this.retryTurn(characterId, item.payload);
       this.handleAgentError(characterId, error);
     } finally {
       this.changed();
     }
   }
 
+  /** A failed turn is retried once, then the conversation ends instead of stalling. */
+  private async retryTurn(
+    characterId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const conversationId = String(payload.conversationId ?? "");
+    const conversation = this.repository.getConversation(conversationId);
+    if (conversation?.status !== "active") return;
+    const attempts = Number(payload.attempts ?? 0) + 1;
+    if (attempts >= MAX_TURN_ATTEMPTS) {
+      await this.endConversation(conversationId, "lost the thread");
+      return;
+    }
+    const now = Date.now();
+    this.repository.enqueue({
+      characterId,
+      kind: "conversation_turn",
+      payload: { ...payload, attempts },
+      priority: 100,
+      dedupeKey: turnKey(conversationId),
+      notBefore: now + TURN_RETRY_MS,
+      expiresAt: conversation.startedAt + CONVERSATION_MAX_MS,
+    });
+  }
+
   private handleAgentError(characterId: string, error: unknown): void {
     const character = this.repository.getCharacter(characterId);
     if (!character) return;
-    const message = error instanceof Error ? error.message : String(error);
-    const exhausted = message === "Daily budget exhausted";
-    if (exhausted) {
+    if (error instanceof BudgetExhaustedError) {
       this.putToBudgetSleep(character.id);
       return;
     }
+    const message = error instanceof Error ? error.message : String(error);
     this.repository.updateCharacter(character.id, {
-      state: "active",
+      state: character.currentConversationId ? character.state : "active",
       intent: "Pausing after a muddled thought",
     });
     this.repository.addEvent(
@@ -692,12 +918,12 @@ export class WorldEngine {
 
   private putToBudgetSleep(characterId: string): void {
     const character = this.repository.getCharacter(characterId);
-    if (!character) return;
-    if (
-      character.state === "sleeping" &&
-      character.intent === BUDGET_SLEEP_INTENT
-    )
-      return;
+    if (!character || isBudgetSleeping(character)) return;
+    if (character.currentConversationId)
+      void this.endConversation(
+        character.currentConversationId,
+        `${character.name} ran out of energy`,
+      );
     this.repository.updateCharacter(character.id, {
       state: "sleeping",
       intent: BUDGET_SLEEP_INTENT,
@@ -714,71 +940,256 @@ export class WorldEngine {
     );
   }
 
+  private wakeFromBudgetSleep(character: CharacterRow): void {
+    this.repository.updateCharacter(character.id, {
+      state: "active",
+      intent: "Waking up with budget to spare",
+      nextDecisionAt: Date.now(),
+    });
+    this.repository.addEvent(
+      event({
+        kind: "system",
+        characterId: character.id,
+        characterName: character.name,
+        targetCharacterId: null,
+        summary: `${character.name} woke up.`,
+        detail: null,
+      }),
+    );
+  }
+
   private async applyDecision(
     characterId: string,
     decision: AgentDecision,
   ): Promise<void> {
     const character = this.repository.getCharacter(characterId);
-    if (!character) return;
+    if (!character || character.currentConversationId) return;
     this.repository.updateCharacter(character.id, { intent: decision.intent });
-    if (
-      decision.action === "approach" ||
-      decision.action === "start_conversation"
-    ) {
-      const target = decision.targetCharacterId
-        ? this.repository.getCharacter(decision.targetCharacterId)
-        : undefined;
-      if (!target || target.currentConversationId || target.paused) {
-        this.repository.updateCharacter(character.id, {
-          state: "waiting",
-          intent: "Waiting for someone to talk with",
+    const location = WORLD_LOCATIONS.find(
+      (item) => item.id === decision.locationId,
+    );
+    switch (decision.action) {
+      case "approach":
+      case "start_conversation": {
+        const target = decision.targetCharacterId
+          ? this.repository.getCharacter(decision.targetCharacterId)
+          : undefined;
+        if (
+          !target ||
+          target.id === character.id ||
+          !isAvailableForConversation(target)
+        ) {
+          this.repository.updateCharacter(character.id, {
+            state: "waiting",
+            intent: "Waiting for someone to talk with",
+          });
+          return;
+        }
+        this.moveNextTo(
+          character.id,
+          target.id,
+          `Going to meet ${target.name}`,
+        );
+        const now = Date.now();
+        this.repository.enqueue({
+          characterId: character.id,
+          kind: "start_conversation",
+          payload: {
+            targetCharacterId: target.id,
+            openingPurpose: decision.message ?? decision.intent,
+          },
+          priority: 90,
+          dedupeKey: `start:${target.id}`,
+          notBefore: now + 4_000,
+          expiresAt: now + QUEUE_EXPIRY_MS,
         });
         return;
       }
-      this.moveNextTo(character.id, target.id, `Going to meet ${target.name}`);
-      const now = Date.now();
-      this.repository.enqueue({
-        characterId: character.id,
-        kind: "start_conversation",
-        payload: {
-          targetCharacterId: target.id,
-          openingPurpose: decision.message ?? decision.intent,
-        },
-        priority: 90,
-        dedupeKey: `start:${target.id}`,
-        notBefore: now + 4_000,
-        expiresAt: now + QUEUE_EXPIRY_MS,
-      });
-      return;
-    }
-    if (decision.action === "move" || decision.action === "inspect_location") {
-      const location =
-        WORLD_LOCATIONS.find((item) => item.id === decision.locationId) ??
-        WORLD_LOCATIONS[Math.floor(Math.random() * WORLD_LOCATIONS.length)]!;
-      const waypoints =
-        LOCATION_WAYPOINTS[location.id] ?? LOCATION_WAYPOINTS.plaza!;
-      const target = waypoints[Math.floor(Math.random() * waypoints.length)]!;
-      const targetX = target.x + (Math.random() - 0.5) * 22;
-      const targetY = target.y + (Math.random() - 0.5) * 16;
-      this.startMovement(character.id, targetX, targetY, decision.intent);
-      return;
-    }
-    if (decision.action === "web_search") {
-      await this.runWebSearch(character.id, decision.query ?? decision.intent);
-      return;
-    }
-    if (decision.action === "sleep") {
-      this.repository.updateCharacter(character.id, {
-        state: "sleeping",
-        intent: decision.intent,
-      });
-      return;
+      case "move": {
+        const target =
+          location ??
+          WORLD_LOCATIONS[Math.floor(this.random() * WORLD_LOCATIONS.length)]!;
+        this.moveToLocation(character.id, target.id, decision.intent);
+        return;
+      }
+      case "inspect_location": {
+        const target =
+          location ??
+          locationAtPoint(character.targetX, character.targetY) ??
+          WORLD_LOCATIONS[0]!;
+        const arrivesAt =
+          this.moveToLocation(character.id, target.id, decision.intent) ??
+          Date.now();
+        this.enqueueOnArrival(character.id, "inspect_arrival", arrivesAt, {
+          locationId: target.id,
+        });
+        return;
+      }
+      case "leave_artifact": {
+        if (this.repository.locationOf(character) === "workshop") {
+          await this.leaveArtifact(character.id);
+          return;
+        }
+        const arrivesAt =
+          this.moveToLocation(
+            character.id,
+            "workshop",
+            "Heading to the Tinker Shed to make something",
+          ) ?? Date.now();
+        this.enqueueOnArrival(character.id, "leave_artifact", arrivesAt, {});
+        return;
+      }
+      case "web_search": {
+        if (this.services.canSearchWeb()) {
+          await this.runWebSearch(
+            character.id,
+            decision.query ?? decision.intent,
+          );
+          return;
+        }
+        this.moveToLocation(
+          character.id,
+          "library",
+          "Looking for answers in the Memory Stack",
+        );
+        return;
+      }
+      case "sleep":
+        this.repository.updateCharacter(character.id, {
+          state: "sleeping",
+          intent: decision.intent,
+        });
+        return;
+      case "respond":
+        if (decision.message) {
+          this.repository.updateCharacter(character.id, {
+            speech: decision.message,
+            speechExpiresAt: Date.now() + 9_000,
+            state: "active",
+          });
+          this.repository.addEvent(
+            event({
+              kind: "conversation",
+              characterId: character.id,
+              characterName: character.name,
+              targetCharacterId: null,
+              summary: `${character.name} says: “${decision.message}”`,
+              detail: null,
+            }),
+          );
+          return;
+        }
+        break;
     }
     this.repository.updateCharacter(character.id, {
       state: decision.intent.toLowerCase().includes("waiting")
         ? "waiting"
         : "active",
       intent: decision.intent,
+    });
+  }
+
+  private enqueueOnArrival(
+    characterId: string,
+    kind: string,
+    arrivesAt: number,
+    payload: Record<string, unknown>,
+  ): void {
+    this.repository.enqueue({
+      characterId,
+      kind,
+      payload,
+      priority: 95,
+      dedupeKey: kind,
+      notBefore: arrivesAt + 100,
+      expiresAt: arrivesAt + QUEUE_EXPIRY_MS,
+    });
+  }
+
+  private recordInspection(
+    characterId: string,
+    locationId: WorldLocationId,
+  ): void {
+    const character = this.repository.getCharacter(characterId);
+    if (!character || !WORLD_LOCATIONS.some((item) => item.id === locationId))
+      return;
+    const place = placeInSentence(locationName(locationId));
+    const detail = inspectionDetail(locationId, this.random);
+    this.repository.addMemory({
+      characterId,
+      kind: "fact",
+      bullet: `Noticed that ${detail}.`,
+      subject: `place:${locationId}`,
+    });
+    this.repository.addEvent(
+      event({
+        kind: "movement",
+        characterId,
+        characterName: character.name,
+        targetCharacterId: null,
+        summary: `${character.name} looked closely around ${place}.`,
+        detail: `Noticed that ${detail}.`,
+      }),
+    );
+    const note = this.repository
+      .listArtifacts(5, locationId)
+      .find((artifact) => artifact.characterId !== characterId);
+    if (note) {
+      this.repository.addMemory({
+        characterId,
+        kind: "fact",
+        bullet: `Found ${note.characterName ?? "someone"}'s “${note.title}” at ${place}: ${note.body.slice(0, 100)}`,
+        subject: `artifact:${note.id}`,
+      });
+      this.repository.addEvent(
+        event({
+          kind: "artifact",
+          characterId,
+          characterName: character.name,
+          targetCharacterId: note.characterId,
+          summary: `${character.name} found ${note.characterName ?? "someone"}'s “${note.title}”.`,
+          detail: note.body,
+        }),
+      );
+    }
+    this.repository.updateCharacter(characterId, {
+      intent: `Thinking about ${place}`,
+    });
+  }
+
+  private async leaveArtifact(characterId: string): Promise<void> {
+    const character = this.repository.getCharacter(characterId);
+    if (!character || this.repository.locationOf(character) !== "workshop")
+      return;
+    const result = await this.services.artifactText(
+      this.buildContext(characterId),
+    );
+    const position = this.repository.positionAt(character);
+    const artifact = this.repository.addArtifact({
+      locationId: "workshop",
+      characterId: character.id,
+      characterName: character.name,
+      kind: /note|question|map|letter/i.test(result.value.title)
+        ? "note"
+        : "object",
+      title: result.value.title,
+      body: result.value.body,
+      x: position.x,
+      y: position.y,
+    });
+    this.repository.addEvent(
+      event({
+        kind: "artifact",
+        characterId: character.id,
+        characterName: character.name,
+        targetCharacterId: null,
+        summary: `${character.name} left “${artifact.title}” at the Tinker Shed.`,
+        detail: artifact.body,
+      }),
+    );
+    this.repository.updateCharacter(character.id, {
+      state: "active",
+      intent: `Left “${artifact.title.slice(0, 60)}” behind`,
     });
   }
 
@@ -789,14 +1200,14 @@ export class WorldEngine {
   ): Promise<void> {
     const a = this.repository.getCharacter(aId);
     const b = this.repository.getCharacter(bId);
-    if (
-      !a ||
-      !b ||
-      a.currentConversationId ||
-      b.currentConversationId ||
-      b.paused
-    )
+    if (!a || !b || a.id === b.id || !isAvailableForConversation(a)) return;
+    if (!isAvailableForConversation(b)) {
+      this.repository.updateCharacter(a.id, {
+        state: "active",
+        intent: `${b.name} is busy right now`,
+      });
       return;
+    }
     const previousConversation = this.repository.lastEndedConversationBetween(
       a.id,
       b.id,
@@ -812,6 +1223,7 @@ export class WorldEngine {
       });
       return;
     }
+    const now = Date.now();
     const aPosition = this.repository.positionAt(a);
     const bPosition = this.repository.positionAt(b);
     if (distance(aPosition, bPosition) > CONVERSATION_DISTANCE) {
@@ -820,7 +1232,6 @@ export class WorldEngine {
         b.id,
         `Catching up with ${b.name}`,
       );
-      const now = Date.now();
       this.repository.enqueue({
         characterId: a.id,
         kind: "start_conversation",
@@ -835,75 +1246,100 @@ export class WorldEngine {
       });
       return;
     }
-    const conversation = this.repository.createConversation(a.id, b.id);
-    const now = Date.now();
-    const centerX = (aPosition.x + bPosition.x) / 2;
-    const centerY = (aPosition.y + bPosition.y) / 2;
-    const aConversationPosition = clampPosition({
-      x: centerX - CONVERSATION_SPACING / 2,
-      y: centerY,
-    });
-    const bConversationPosition = clampPosition({
-      x: centerX + CONVERSATION_SPACING / 2,
-      y: centerY,
-    });
-    this.repository.updateCharacter(a.id, {
-      currentConversationId: conversation.id,
-      state: "talking",
-      intent: `Talking with ${b.name}`,
-      x: aConversationPosition.x,
-      y: aConversationPosition.y,
-      targetX: aConversationPosition.x,
-      targetY: aConversationPosition.y,
-      movementStartedAt: now,
-      movementArrivesAt: now,
-    });
-    this.repository.updateCharacter(b.id, {
-      currentConversationId: conversation.id,
-      state: "talking",
-      intent: `Talking with ${a.name}`,
-      x: bConversationPosition.x,
-      y: bConversationPosition.y,
-      targetX: bConversationPosition.x,
-      targetY: bConversationPosition.y,
-      movementStartedAt: now,
-      movementArrivesAt: now,
-    });
-    this.repository.addEvent(
-      event({
-        kind: "conversation",
+    // Pulling b into a conversation changes b, so hold b's lease while doing it.
+    const bLease = this.repository.claimCharacter(b.id, 30_000);
+    if (!bLease) {
+      this.repository.enqueue({
         characterId: a.id,
-        characterName: a.name,
-        targetCharacterId: b.id,
-        summary: `${a.name} and ${b.name} started talking.`,
-        detail: `conversation:${conversation.id}`,
-      }),
-    );
-    this.repository.enqueue({
-      characterId: a.id,
-      kind: "conversation_turn",
-      payload: {
-        conversationId: conversation.id,
-        fromName: b.name,
-        previous: "Hello.",
-        conversationPurpose:
-          openingPurpose ??
-          `Compare grounded observations about ${this.buildContext(a.id).area.name}`,
-      },
-      priority: 100,
-      notBefore: now,
-      expiresAt: now + CONVERSATION_MAX_MS,
-    });
+        kind: "start_conversation",
+        payload: {
+          targetCharacterId: b.id,
+          ...(openingPurpose ? { openingPurpose } : {}),
+        },
+        priority: 90,
+        dedupeKey: `start:${b.id}:retry`,
+        notBefore: now + 1_500,
+        expiresAt: now + 60_000,
+      });
+      return;
+    }
+    try {
+      const freshB = this.repository.getCharacter(b.id);
+      if (!freshB || !isAvailableForConversation(freshB)) return;
+      const conversation = this.repository.createConversation(a.id, b.id);
+      const centerX = (aPosition.x + bPosition.x) / 2;
+      const centerY = (aPosition.y + bPosition.y) / 2;
+      const aSpot = clampPosition({
+        x: centerX - CONVERSATION_SPACING / 2,
+        y: centerY,
+      });
+      const bSpot = clampPosition({
+        x: centerX + CONVERSATION_SPACING / 2,
+        y: centerY,
+      });
+      for (const [id, spot, otherName] of [
+        [a.id, aSpot, b.name],
+        [b.id, bSpot, a.name],
+      ] as const) {
+        this.repository.updateCharacter(id, {
+          currentConversationId: conversation.id,
+          state: "talking",
+          intent: `Talking with ${otherName}`,
+          x: spot.x,
+          y: spot.y,
+          targetX: spot.x,
+          targetY: spot.y,
+          movementStartedAt: now,
+          movementArrivesAt: now,
+        });
+      }
+      this.repository.addEvent(
+        event({
+          kind: "conversation",
+          characterId: a.id,
+          characterName: a.name,
+          targetCharacterId: b.id,
+          summary: `${a.name} and ${b.name} started talking.`,
+          detail: null,
+          conversationId: conversation.id,
+        }),
+      );
+      this.repository.enqueue({
+        characterId: a.id,
+        kind: "conversation_turn",
+        payload: {
+          conversationId: conversation.id,
+          fromName: b.name,
+          previous: "Hello.",
+          conversationPurpose:
+            openingPurpose ??
+            conversationOpener(this.buildContext(a.id), b.name, this.random),
+        },
+        priority: 100,
+        dedupeKey: turnKey(conversation.id),
+        notBefore: now,
+        expiresAt: now + CONVERSATION_MAX_MS,
+      });
+    } finally {
+      this.repository.releaseCharacter(b.id, bLease);
+    }
   }
 
   private async runConversationTurn(
     characterId: string,
-    conversationId: string,
-    fromName: string,
-    previous: string,
-    directive?: string,
-    conversationPurpose?: string,
+    payload: Record<string, unknown>,
   ): Promise<void> {
+    const conversationId = String(payload.conversationId ?? "");
+    const fromName = String(payload.fromName ?? "");
+    const previous = String(payload.previous ?? "");
+    const directive =
+      typeof payload.directive === "string" && payload.directive
+        ? payload.directive
+        : undefined;
+    const conversationPurpose =
+      typeof payload.conversationPurpose === "string"
+        ? payload.conversationPurpose
+        : undefined;
     const conversation = this.repository.getConversation(conversationId);
     const character = this.repository.getCharacter(characterId);
     if (
@@ -930,7 +1366,10 @@ export class WorldEngine {
         ? conversation.characterBId
         : conversation.characterAId;
     const other = this.repository.getCharacter(otherId);
-    if (!other) return;
+    if (!other) {
+      await this.endConversation(conversationId, "partner left");
+      return;
+    }
     const characterPosition = this.repository.positionAt(character);
     const otherPosition = this.repository.positionAt(other);
     if (distance(characterPosition, otherPosition) > CONVERSATION_DISTANCE) {
@@ -951,12 +1390,16 @@ export class WorldEngine {
           ...(conversationPurpose ? { conversationPurpose } : {}),
         },
         priority: 100,
-        dedupeKey: `rejoin:${conversationId}:${character.id}:${Math.floor(now / 1_000)}`,
+        dedupeKey: turnKey(conversationId),
         notBefore: Math.max(now + 250, (arrivesAt ?? now) + 100),
         expiresAt: conversation.startedAt + CONVERSATION_MAX_MS,
       });
       return;
     }
+    const history = this.repository.listConversationMessages(
+      conversationId,
+      CONVERSATION_LIMIT,
+    );
     const response = await this.services.conversationMessage(
       this.buildContext(characterId, {
         directive,
@@ -974,36 +1417,48 @@ export class WorldEngine {
                 ? "wrapping_up"
                 : "continuing",
         },
-        conversationHistory: this.repository
-          .listEvents()
-          .filter((item) => item.detail === `conversation:${conversationId}`)
-          .slice(0, 6)
-          .reverse()
-          .map((item) => item.summary),
+        conversationHistory: history.map(
+          (message) => `${message.speakerName}: ${message.text}`,
+        ),
         conversationPurpose,
       }),
       other.name,
       previous,
       conversation.messageCount,
     );
-    const messageEvent = event({
-      kind: "conversation",
-      characterId: character.id,
-      characterName: character.name,
-      targetCharacterId: other.id,
-      summary: `${character.name}: “${response.value}”`,
-      detail: `conversation:${conversationId}`,
+    const count = this.repository.incrementConversationMessages(conversationId);
+    if (count === null) return;
+    const text = response.value.text;
+    this.repository.addConversationMessage({
+      conversationId,
+      speakerId: character.id,
+      speakerName: character.name,
+      text,
     });
-    this.repository.addEvent(messageEvent);
+    this.repository.addEvent(
+      event({
+        kind: "conversation",
+        characterId: character.id,
+        characterName: character.name,
+        targetCharacterId: other.id,
+        summary: `${character.name}: “${text}”`,
+        detail: null,
+        conversationId,
+      }),
+    );
     this.repository.updateCharacter(character.id, {
-      speech: response.value,
+      speech: text,
       speechExpiresAt: Date.now() + 9_000,
       state: "talking",
       intent: `Talking with ${other.name}`,
     });
-    this.repository.updateConversation(conversationId, {
-      messageCount: conversation.messageCount + 1,
-    });
+    if (response.value.end || count >= CONVERSATION_LIMIT) {
+      await this.endConversation(
+        conversationId,
+        response.value.end ? `${character.name} wrapped up` : "message limit",
+      );
+      return;
+    }
     const now = Date.now();
     this.repository.enqueue({
       characterId: other.id,
@@ -1011,12 +1466,12 @@ export class WorldEngine {
       payload: {
         conversationId,
         fromName: character.name,
-        previous: response.value,
+        previous: text,
         ...(conversationPurpose ? { conversationPurpose } : {}),
       },
       priority: 100,
-      notBefore:
-        now + Number(process.env.AGENT_WORLD_REACTION_COOLDOWN_MS ?? 10_000),
+      dedupeKey: turnKey(conversationId),
+      notBefore: now + this.reactionDelay(),
       expiresAt: conversation.startedAt + CONVERSATION_MAX_MS,
     });
   }
@@ -1026,28 +1481,29 @@ export class WorldEngine {
     reason: string,
   ): Promise<void> {
     const conversation = this.repository.getConversation(conversationId);
-    if (!conversation || conversation.status !== "active") return;
+    if (!conversation) return;
+    if (!this.repository.markConversationEnded(conversationId, reason)) return;
+    this.repository.cancelQueueItems(turnKey(conversationId));
     const a = this.repository.getCharacter(conversation.characterAId);
     const b = this.repository.getCharacter(conversation.characterBId);
-    this.repository.updateConversation(conversationId, {
-      status: "ended",
-      endedAt: Date.now(),
-      terminationReason: reason,
-    });
-    if (a)
-      this.repository.updateCharacter(a.id, {
+    for (const [self, other] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      if (!self || self.currentConversationId !== conversationId) continue;
+      this.repository.updateCharacter(self.id, {
         currentConversationId: null,
-        state: "active",
-        speech: null,
-        intent: `Reflecting after talking with ${b?.name ?? "someone"}`,
+        state: self.paused
+          ? "paused"
+          : self.state === "talking"
+            ? "active"
+            : self.state,
+        intent:
+          self.paused || isBudgetSleeping(self)
+            ? self.intent
+            : `Reflecting after talking with ${other?.name ?? "someone"}`,
       });
-    if (b)
-      this.repository.updateCharacter(b.id, {
-        currentConversationId: null,
-        state: "active",
-        speech: null,
-        intent: `Reflecting after talking with ${a?.name ?? "someone"}`,
-      });
+    }
     this.repository.addEvent(
       event({
         kind: "conversation",
@@ -1056,55 +1512,40 @@ export class WorldEngine {
         targetCharacterId: b?.id ?? null,
         summary: `${a?.name ?? "A character"} and ${b?.name ?? "another character"} finished talking.`,
         detail: reason,
+        conversationId,
       }),
     );
-    if (a && b) {
-      const transcript = this.repository
-        .listEvents()
-        .filter((item) => item.detail === `conversation:${conversationId}`)
-        .reverse()
-        .map((item) => item.summary)
-        .join("\n");
-      await Promise.all([
-        this.extractConversationMemory(
-          a.id,
-          a.name,
-          a.model,
-          b.id,
-          b.name,
-          transcript,
-        ),
-        this.extractConversationMemory(
-          b.id,
-          b.name,
-          b.model,
-          a.id,
-          a.name,
-          transcript,
-        ),
-      ]);
-    }
+    this.changed();
+    if (!a || !b) return;
+    const messages = this.repository.listConversationMessages(conversationId);
+    if (!messages.length) return;
+    const transcript = messages
+      .map((message) => `${message.speakerName}: ${message.text}`)
+      .join("\n");
+    await Promise.all([
+      this.extractConversationMemory(a, b, transcript),
+      this.extractConversationMemory(b, a, transcript),
+    ]);
   }
 
   private async extractConversationMemory(
-    characterId: string,
-    characterName: string,
-    model: string,
-    otherId: string,
-    otherName: string,
+    self: CharacterRow,
+    other: CharacterRow,
     transcript: string,
   ): Promise<void> {
     try {
-      const result = await this.services.extractMemory(
-        characterId,
-        model,
-        characterName,
-        otherName,
+      const result = await this.services.extractMemory({
+        characterId: self.id,
+        model: self.model,
+        characterName: self.name,
+        otherName: other.name,
+        otherPersonality: other.personality,
         transcript,
-      );
+      });
+      if (!this.repository.getCharacter(self.id)) return;
       for (const memory of result.value) {
         this.repository.addMemory({
-          characterId,
+          characterId: self.id,
           kind: memory.kind,
           bullet: memory.bullet,
           subject: memory.subject,
@@ -1112,20 +1553,20 @@ export class WorldEngine {
       }
       const impression =
         result.value.find((memory) => memory.kind === "impression")?.bullet ??
-        `${otherName} shared a conversation with ${characterName}.`;
-      this.repository.upsertRelationship(characterId, otherId, impression, 1);
+        `${other.name} shared a conversation with ${self.name}.`;
+      this.repository.upsertRelationship(self.id, other.id, impression, 1);
       this.repository.addEvent(
         event({
           kind: "memory",
-          characterId,
-          characterName,
-          targetCharacterId: otherId,
-          summary: `${characterName} formed ${result.value.length} new ${result.value.length === 1 ? "memory" : "memories"}.`,
+          characterId: self.id,
+          characterName: self.name,
+          targetCharacterId: other.id,
+          summary: `${self.name} formed ${result.value.length} new ${result.value.length === 1 ? "memory" : "memories"}.`,
           detail: result.value.map((item) => `• ${item.bullet}`).join("\n"),
         }),
       );
     } catch (error) {
-      this.handleAgentError(characterId, error);
+      this.handleAgentError(self.id, error);
     }
   }
 
@@ -1149,16 +1590,19 @@ export class WorldEngine {
           characterId: character.id,
           characterName: character.name,
           targetCharacterId: null,
-          summary: `${character.name} searched for “${query.slice(0, 120)}”.`,
+          summary: result.value
+            ? `${character.name} searched for “${query.slice(0, 120)}”.`
+            : `${character.name}'s search for “${query.slice(0, 120)}” came up empty.`,
           detail: result.value,
         }),
       );
-      this.repository.addMemory({
-        characterId: character.id,
-        kind: "fact",
-        bullet: `Searched the web for “${query.slice(0, 100)}”.`,
-        subject: `search:${query.slice(0, 60)}`,
-      });
+      if (result.value)
+        this.repository.addMemory({
+          characterId: character.id,
+          kind: "fact",
+          bullet: `Learned from searching “${query.slice(0, 60)}”: ${result.value.split("\n")[0]!.slice(0, 160)}`,
+          subject: `search:${query.slice(0, 60)}`,
+        });
     } finally {
       this.repository.updateCharacter(character.id, {
         state: "active",

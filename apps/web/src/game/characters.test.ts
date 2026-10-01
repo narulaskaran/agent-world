@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { LOCATION_WAYPOINTS, type PublicCharacter } from "@agent-world/shared";
+import {
+  LOCATION_WAYPOINTS,
+  locationAtPoint,
+  type PublicCharacter,
+} from "@agent-world/shared/world";
 import {
   cameraOffset,
   DEFAULT_DISTANCE,
@@ -13,7 +17,10 @@ import {
   characterStandPose,
   createCharacterAvatar,
   createCharacterHitMaterial,
+  SETTLE_MS,
   isCharacterObject,
+  movementPlan,
+  paletteIndex,
   pawnFrameSamples,
 } from "./characters";
 import { TILE_TOP } from "./hex";
@@ -25,10 +32,10 @@ import {
   pointInLandmarkFootprint,
 } from "./landmarks";
 
-function ksnAtShed(): PublicCharacter {
+function mossAtShed(): PublicCharacter {
   return {
     id: "fc854a3d-e63e-4213-9fff-0712520fb153",
-    name: "KSN",
+    name: "Moss",
     personality: "Curious maker.",
     model: "deterministic",
     dailyBudgetMicros: 500_000,
@@ -46,8 +53,8 @@ function ksnAtShed(): PublicCharacter {
     toolActive: false,
     reputation: 0,
     locationId: "workshop",
-    memories: [],
-    relationships: [],
+    movementArrivesAt: 0,
+    currentConversationId: null,
     updatedAt: 0,
   };
 }
@@ -66,6 +73,26 @@ describe("landmark courtyards", () => {
     }
   });
 
+  it("keeps every waypoint's standing spot inside its own location", () => {
+    for (const [locationId, points] of Object.entries(LOCATION_WAYPOINTS)) {
+      for (const point of points) {
+        const pose = characterStandPose(point.x, point.y);
+        expect(
+          locationAtPoint(pose.x, pose.z)?.id,
+          `${locationId} waypoint ${point.x},${point.y} stands at ${pose.x},${pose.z}`,
+        ).toBe(locationId);
+      }
+    }
+  });
+
+  it("does not cascade a café courtyard into the library's corridor", () => {
+    const cafe = LANDMARK_FOOTPRINTS.find((item) => item.id === "cafe")!;
+    const library = LANDMARK_FOOTPRINTS.find((item) => item.id === "library")!;
+    const cleared = clearLandmarkFootprint(library.x, cafe.z);
+    expect(cleared.z).toBe(courtyardStandZ(cafe));
+    expect(cleared.z).toBeLessThan(library.z - library.halfZ);
+  });
+
   it("pushes a point buried in the Tinker Shed out to the south courtyard", () => {
     const workshop = LANDMARK_FOOTPRINTS.find(
       (item) => item.id === "workshop",
@@ -73,6 +100,31 @@ describe("landmark courtyards", () => {
     const buried = clearLandmarkFootprint(workshop.x, workshop.z);
     expect(pointInLandmarkFootprint(buried.x, buried.z, workshop)).toBe(false);
     expect(buried.z).toBeGreaterThanOrEqual(courtyardStandZ(workshop));
+  });
+});
+
+describe("movement timing", () => {
+  const walker = { x: 100, y: 100, targetX: 400, targetY: 100 };
+
+  it("tweens over the server's remaining walk time, not a fixed duration", () => {
+    expect(
+      movementPlan({ ...walker, movementArrivesAt: 13_000 }, 10_000),
+    ).toEqual({ x: 400, z: 100, durationMs: 3_000, walking: true });
+  });
+
+  it("settles on the current position once the walk is over", () => {
+    expect(
+      movementPlan({ ...walker, movementArrivesAt: 9_000 }, 10_000),
+    ).toEqual({ x: 100, z: 100, durationMs: SETTLE_MS, walking: false });
+  });
+
+  it("hashes the whole name for the pawn palette", () => {
+    const indexes = new Set(
+      ["Mira", "Moss", "Milo", "Mabel", "Max", "Mint"].map((name) =>
+        paletteIndex(name, 6),
+      ),
+    );
+    expect(indexes.size).toBeGreaterThan(1);
   });
 });
 
@@ -88,7 +140,7 @@ describe("living character avatars", () => {
   });
 
   it("builds an opaque, pickable pawn tagged with the character id", () => {
-    const character = ksnAtShed();
+    const character = mossAtShed();
     const avatar = createCharacterAvatar(character);
     expect(avatar.group.userData.characterId).toBe(character.id);
     expect(avatar.group.scale.x).toBeGreaterThan(1);
@@ -117,7 +169,7 @@ describe("living character avatars", () => {
   it("is the first opaque hit from the overview camera at the Tinker Shed", () => {
     const scene = new THREE.Scene();
     createLandmarks(scene);
-    const character = ksnAtShed();
+    const character = mossAtShed();
     const avatar = createCharacterAvatar(character);
     scene.add(avatar.group);
     scene.updateMatrixWorld(true);
@@ -146,7 +198,7 @@ describe("living character avatars", () => {
   });
 
   it("raycasts the invisible hit volume from a tap at default zoom", () => {
-    const character = ksnAtShed();
+    const character = mossAtShed();
     const avatar = createCharacterAvatar(character);
     avatar.group.updateMatrixWorld(true);
     const pose = characterStandPose(character.x, character.y);

@@ -42,9 +42,13 @@ async function waitForHealth(timeoutMs = 20_000) {
 }
 
 function spawnServer(databasePath) {
-  const env = { ...process.env };
-  delete env.OPENROUTER_API_KEY;
-  delete env.AGENT_WORLD_LIVE_MPP;
+  // Empty values, not deletions: `--env-file-if-exists` never overrides a set
+  // variable, so a developer's .env cannot turn paid providers back on.
+  const env = {
+    ...process.env,
+    OPENROUTER_API_KEY: "",
+    AGENT_WORLD_LIVE_MPP: "false",
+  };
   env.AGENT_WORLD_HOST = HOST;
   env.AGENT_WORLD_SERVER_PORT = String(PORT);
   env.AGENT_WORLD_DATABASE = databasePath;
@@ -123,7 +127,37 @@ async function main() {
   const child = spawnServer(databasePath);
   try {
     await waitForHealth();
-    pass("health");
+    const health = await (await fetch(`${BASE}/health`)).json();
+    if (health?.mode?.budgeted !== false)
+      fail(
+        "health",
+        `expected the keyless brain, got ${JSON.stringify(health?.mode)}`,
+      );
+    pass("health (keyless brain)");
+
+    const crossSite = await fetch(`${BASE}/api/admin/pause`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://evil.example",
+      },
+      body: JSON.stringify({ paused: true }),
+    });
+    if (crossSite.status !== 403)
+      fail(
+        "origin",
+        `expected 403 for a foreign origin, got ${crossSite.status}`,
+      );
+    pass("foreign origin rejected");
+
+    const emptyPause = await fetch(`${BASE}/api/admin/pause`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (emptyPause.status !== 400)
+      fail("pause", `expected 400 without {paused}, got ${emptyPause.status}`);
+    pass("pause requires an explicit body");
 
     const home = await fetch(`${BASE}/`);
     const html = await home.text();
@@ -181,6 +215,13 @@ async function main() {
         `intent/position unchanged (${live.intent} @ ${live.x},${live.y})`,
       );
     pass("movement");
+
+    if (snapshot.serverSpentTodayMicros !== 0)
+      fail(
+        "spend",
+        `keyless world spent ${snapshot.serverSpentTodayMicros} micros`,
+      );
+    pass("keyless world spent nothing");
   } finally {
     await stopServer(child);
     await rm(tempDir, { recursive: true, force: true });

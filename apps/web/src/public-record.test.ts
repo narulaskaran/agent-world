@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
+import type { WorldEvent } from "@agent-world/shared/world";
 import {
   PUBLIC_RECORD_LIMIT,
+  conversationLine,
   eventDetail,
   eventDetailsLabel,
+  eventInvolves,
   shortDisplayId,
   shortenFeedSummary,
+  summarySegments,
+  threadEvents,
+  type FeedItem,
 } from "./public-record";
 
 describe("eventDetail", () => {
@@ -99,6 +105,94 @@ describe("shortenFeedSummary", () => {
     const text = "SmB511433 studied Sunbeam Plaza.";
     expect(shortenFeedSummary(text)).toBe("SmB studied Sunbeam Plaza.");
     expect(shortenFeedSummary(text)).toBe("SmB studied Sunbeam Plaza.");
+  });
+});
+
+const event = (overrides: Partial<WorldEvent>): WorldEvent => ({
+  id: crypto.randomUUID(),
+  kind: "conversation",
+  characterId: "moss",
+  characterName: "Moss",
+  targetCharacterId: "juniper",
+  summary: "Moss: “Hello.”",
+  detail: null,
+  createdAt: 0,
+  ...overrides,
+});
+
+describe("threadEvents", () => {
+  it("collapses a conversation into one thread at its newest position", () => {
+    const items = threadEvents([
+      event({ id: "c3", conversationId: "a", createdAt: 3 }),
+      event({ id: "x", kind: "movement", createdAt: 2 }),
+      event({ id: "c1", conversationId: "a", createdAt: 1 }),
+    ]);
+    expect(items.map((item) => item.type)).toEqual(["conversation", "event"]);
+    const thread = items[0] as Extract<FeedItem, { type: "conversation" }>;
+    expect(thread.events.map((item) => item.id)).toEqual(["c1", "c3"]);
+    expect(thread.latest.id).toBe("c3");
+  });
+
+  it("keeps separate conversations apart", () => {
+    const items = threadEvents([
+      event({ conversationId: "a" }),
+      event({ conversationId: "b" }),
+    ]);
+    expect(items).toHaveLength(2);
+  });
+});
+
+describe("eventInvolves", () => {
+  it("matches the actor or the target", () => {
+    expect(eventInvolves(event({}), "juniper")).toBe(true);
+    expect(eventInvolves(event({}), "tinker")).toBe(false);
+  });
+});
+
+describe("summarySegments", () => {
+  const characters = [
+    { id: "moss", name: "Moss" },
+    { id: "juniper", name: "Juniper" },
+  ];
+
+  it("does not link a name inside a place name", () => {
+    const tinker = [{ id: "tinker", name: "Tinker" }];
+    const segments = summarySegments(
+      "Tinker left a map at the Tinker Shed.",
+      tinker,
+    );
+    expect(segments.filter((segment) => segment.characterId)).toEqual([
+      { text: "Tinker", characterId: "tinker" },
+    ]);
+    expect(segments.map((segment) => segment.text).join("")).toBe(
+      "Tinker left a map at the Tinker Shed.",
+    );
+  });
+
+  it("links whole character names only", () => {
+    expect(
+      summarySegments("Moss and Juniper started talking.", characters),
+    ).toEqual([
+      { text: "Moss", characterId: "moss" },
+      { text: " and " },
+      { text: "Juniper", characterId: "juniper" },
+      { text: " started talking." },
+    ]);
+    expect(summarySegments("Mossy rocks", characters)).toEqual([
+      { text: "Mossy rocks" },
+    ]);
+  });
+});
+
+describe("conversationLine", () => {
+  it("splits a spoken line from its speaker", () => {
+    expect(conversationLine(event({}))).toEqual({
+      speaker: "Moss",
+      text: "Hello.",
+    });
+    expect(
+      conversationLine(event({ summary: "Moss and Juniper started talking." })),
+    ).toBeNull();
   });
 });
 

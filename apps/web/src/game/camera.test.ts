@@ -1,5 +1,6 @@
+import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { WORLD_HEIGHT, WORLD_WIDTH } from "@agent-world/shared";
+import { WORLD_HEIGHT, WORLD_WIDTH } from "@agent-world/shared/world";
 import {
   CAMERA_FOV,
   CAMERA_PITCH,
@@ -9,9 +10,11 @@ import {
   MAX_DISTANCE,
   MIN_DISTANCE,
   PLAZA_FOCUS,
+  applyOverviewPose,
   applyPinchZoom,
   applyZoomDelta,
   cameraOffset,
+  followTarget,
   framePoints,
   isDragGesture,
   panFromScreenDelta,
@@ -20,6 +23,36 @@ import {
   spring,
 } from "./camera";
 import { hexToWorld, hexesCoveringWorld, worldToHex } from "./hex";
+
+describe("followTarget", () => {
+  it("centres the pawn when no inspector is open", () => {
+    expect(
+      followTarget(400, 300, 500, { aspect: 1.6, inspector: "none" }),
+    ).toEqual({ x: 400, z: 300 });
+  });
+
+  it("lifts the pawn above a bottom inspector sheet", () => {
+    const target = followTarget(400, 300, 500, {
+      aspect: 0.46,
+      inspector: "bottom",
+    });
+    const offset = cameraOffset(500);
+    expect(target.x - 400).toBeCloseTo(offset.x * 0.3);
+    expect(target.z - 300).toBeCloseTo(offset.z * 0.3);
+  });
+
+  it("moves the pawn right of a left inspector panel", () => {
+    const target = followTarget(400, 300, 500, {
+      aspect: 1.6,
+      inspector: "left",
+    });
+    const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1.6, 1, 4000);
+    applyOverviewPose(camera, target.x, target.z, 500);
+    const pawn = new THREE.Vector3(400, 0, 300).project(camera);
+    expect(pawn.x).toBeGreaterThan(0.25);
+    expect(Math.abs(pawn.y)).toBeLessThan(0.2);
+  });
+});
 
 describe("civ camera", () => {
   it("keeps a tilted overview pitch and north-ish offset", () => {

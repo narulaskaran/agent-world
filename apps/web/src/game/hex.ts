@@ -3,7 +3,11 @@ import {
   WORLD_WIDTH,
   locationAtPoint,
   type WorldLocationId,
-} from "@agent-world/shared";
+} from "@agent-world/shared/world";
+import {
+  hexToWorld as axialToWorld,
+  worldToHex as worldToAxial,
+} from "@agent-world/shared/hex";
 import { clamp } from "./camera";
 
 /** Pointy-top hex radius (center to vertex). */
@@ -19,31 +23,11 @@ export interface HexCell {
   kind: TerrainKind;
 }
 
-export function hexToWorld(q: number, r: number): { x: number; z: number } {
-  return {
-    x: HEX_SIZE * Math.sqrt(3) * (q + r / 2),
-    z: HEX_SIZE * 1.5 * r,
-  };
-}
+export const hexToWorld = (q: number, r: number) =>
+  axialToWorld(q, r, HEX_SIZE);
 
-function hexRound(q: number, r: number): { q: number; r: number } {
-  const s = -q - r;
-  let rq = Math.round(q);
-  let rr = Math.round(r);
-  const rs = Math.round(s);
-  const dq = Math.abs(rq - q);
-  const dr = Math.abs(rr - r);
-  const ds = Math.abs(rs - s);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds) rr = -rq - rs;
-  return { q: rq, r: rr };
-}
-
-export function worldToHex(x: number, z: number): { q: number; r: number } {
-  const q = ((Math.sqrt(3) / 3) * x - (1 / 3) * z) / HEX_SIZE;
-  const r = ((2 / 3) * z) / HEX_SIZE;
-  return hexRound(q, r);
-}
+export const worldToHex = (x: number, z: number) =>
+  worldToAxial(x, z, HEX_SIZE);
 
 const PATH_SEGMENTS: Array<
   [{ x: number; z: number }, { x: number; z: number }]

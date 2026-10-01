@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { PublicCharacter } from "@agent-world/shared";
+import { hashString, type PublicCharacter } from "@agent-world/shared/world";
 import { HEX_SIZE, TILE_TOP } from "./hex";
 import { clearLandmarkFootprint } from "./landmarks";
 
@@ -26,6 +26,39 @@ export interface CharacterAvatar {
   rightArm: THREE.Mesh;
   tool: THREE.Mesh;
 }
+
+/** Settle time for small corrections when a character is not walking. */
+export const SETTLE_MS = 900;
+
+/**
+ * Where the pawn should head and how long it should take, from the server's
+ * own clock: the walk ends at `movementArrivesAt`, measured from `generatedAt`.
+ */
+export function movementPlan(
+  character: Pick<
+    PublicCharacter,
+    "x" | "y" | "targetX" | "targetY" | "movementArrivesAt"
+  >,
+  generatedAt: number,
+): { x: number; z: number; durationMs: number; walking: boolean } {
+  const remaining = character.movementArrivesAt - generatedAt;
+  if (remaining > 0)
+    return {
+      x: character.targetX,
+      z: character.targetY,
+      durationMs: remaining,
+      walking: true,
+    };
+  return {
+    x: character.x,
+    z: character.y,
+    durationMs: SETTLE_MS,
+    walking: false,
+  };
+}
+
+export const paletteIndex = (name: string, size: number) =>
+  hashString(name) % size;
 
 export function characterStandPose(
   x: number,
@@ -74,9 +107,9 @@ export function createCharacterHitMaterial() {
 export function createCharacterAvatar(
   character: PublicCharacter,
 ): CharacterAvatar {
-  const paletteIndex = Math.abs(character.name.charCodeAt(0)) % SKIN.length;
-  const skin = SKIN[paletteIndex] ?? 0xe8aa70;
-  const hair = HAIR[paletteIndex] ?? 0x4b332c;
+  const palette = paletteIndex(character.name, SKIN.length);
+  const skin = SKIN[palette] ?? 0xe8aa70;
+  const hair = HAIR[palette] ?? 0x4b332c;
   const outfit = new THREE.Color(character.avatarColor).getHex();
   const pose = characterStandPose(character.x, character.y);
   const group = new THREE.Group();

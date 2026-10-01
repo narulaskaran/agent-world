@@ -1,5 +1,12 @@
-import { WORLD_LOCATIONS, type WorldLocationId } from "@agent-world/shared";
+import {
+  WORLD_LOCATIONS,
+  locationName,
+  placeInSentence,
+  relationshipTier,
+  type WorldLocationId,
+} from "@agent-world/shared";
 import { DEFAULT_JEV_MODEL } from "./config.js";
+import { conversationOpener, type Random } from "./deterministic.js";
 import type { OpenRouterClient } from "./openrouter.js";
 import type { AgentContext, AgentDecision } from "./services.js";
 
@@ -30,14 +37,7 @@ export interface JevPartner {
   locationId?: string | null;
 }
 
-export const relationshipWord = (affinity: number | undefined): string =>
-  affinity === undefined
-    ? "stranger"
-    : affinity < 20
-      ? "acquaintance"
-      : affinity < 50
-        ? "friend"
-        : "close friend";
+export const relationshipWord = relationshipTier;
 
 export const availablePartners = (context: AgentContext): JevPartner[] =>
   context.nearby
@@ -94,10 +94,6 @@ const answersFromBody = (
   }
   return answers as Record<string, JevAnswer | undefined>;
 };
-
-const locationName = (locationId: string): string =>
-  WORLD_LOCATIONS.find((location) => location.id === locationId)?.name ??
-  locationId;
 
 export function buildJevBody(
   context: AgentContext,
@@ -162,6 +158,11 @@ export function buildJevBody(
           : {}),
         inspect: "Look closely at a place and remember something about it.",
         walk: "Wander to a different place, perhaps to find company.",
+        ...(context.area.id === "workshop"
+          ? {
+              make: "Make something or leave a note at the Tinker Shed for others to find.",
+            }
+          : {}),
       },
     },
     walk_to: {
@@ -207,6 +208,7 @@ export function buildJevBody(
 export function mapJevDecision(
   body: unknown,
   context: AgentContext,
+  random: Random = Math.random,
 ): AgentDecision | null {
   const answers = answersFromBody(body);
   if (!answers) return null;
@@ -215,9 +217,15 @@ export function mapJevDecision(
     ...(partners.length > 0 ? ["talk"] : []),
     "inspect",
     "walk",
+    ...(context.area.id === "workshop" ? ["make"] : []),
   ]);
   const action = pick(answers.action, actions);
   if (!action || action.confidence < MIN_ACTION_CONFIDENCE) return null;
+  if (action.choice === "make")
+    return {
+      action: "leave_artifact",
+      intent: "Making something to leave behind",
+    };
   const locationIds = new Set<string>(WORLD_LOCATIONS.map((item) => item.id));
   if (action.choice === "inspect" || action.choice === "walk") {
     const allowed =
@@ -238,12 +246,12 @@ export function mapJevDecision(
       ? {
           action: "move",
           locationId,
-          intent: `Exploring ${locationName(locationId)}`,
+          intent: `Exploring ${placeInSentence(locationName(locationId))}`,
         }
       : {
           action: "inspect_location",
           locationId,
-          intent: `Looking around ${locationName(locationId)}`,
+          intent: `Looking around ${placeInSentence(locationName(locationId))}`,
         };
   }
   const partner = pick(
@@ -256,6 +264,7 @@ export function mapJevDecision(
     action: "approach",
     targetCharacterId: first.id,
     intent: `Ask ${first.name} what they have noticed around ${context.area.name}`,
+    message: conversationOpener(context, first.name, random),
   };
 }
 
@@ -287,7 +296,10 @@ export class JevDecider {
     return this.now() < this.pausedUntil;
   }
 
-  async decide(context: AgentContext): Promise<JevDecideResult> {
+  async decide(
+    context: AgentContext,
+    random: Random = Math.random,
+  ): Promise<JevDecideResult> {
     if (this.isPaused()) {
       throw new Error("JEV paused after repeated failures");
     }
@@ -296,7 +308,7 @@ export class JevDecider {
       const result = await this.client.decisions(requestBody);
       this.failures = 0;
       return {
-        decision: mapJevDecision(result.body, context),
+        decision: mapJevDecision(result.body, context, random),
         costMicros: jevCostMicros(result.body, requestBody),
         metadata: { ...result.metadata, provider: "openrouter-jev" },
         requestBody,
