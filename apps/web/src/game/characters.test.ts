@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
   LOCATION_WAYPOINTS,
+  WORLD_LOCATIONS,
   locationAtPoint,
   type PublicCharacter,
 } from "@agent-world/shared/world";
@@ -29,8 +30,19 @@ import {
   clearLandmarkFootprint,
   courtyardStandZ,
   createLandmarks,
+  locationSignAnchors,
   pointInLandmarkFootprint,
 } from "./landmarks";
+
+describe("location signs", () => {
+  it("labels every place with its shared name", () => {
+    expect(
+      locationSignAnchors()
+        .map((sign) => sign.name)
+        .sort(),
+    ).toEqual(WORLD_LOCATIONS.map((location) => location.name).sort());
+  });
+});
 
 function mossAtShed(): PublicCharacter {
   return {

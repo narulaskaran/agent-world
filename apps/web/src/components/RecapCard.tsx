@@ -7,7 +7,8 @@ import {
   recapSentence,
   recapWorthShowing,
 } from "../brain";
-import { eventClock, shortenFeedSummary } from "../public-record";
+import { eventClock } from "../public-record";
+import { LinkedSummary } from "./LinkedSummary";
 
 const MARK_SEEN_MS = 30_000;
 
@@ -75,26 +76,15 @@ export function RecapCard({
       <p>{recapSentence(recap)}</p>
       {recap.highlights.length > 0 && (
         <ul>
-          {recap.highlights.slice(0, 4).map((event) => {
-            const actor = characters.find(
-              (character) => character.id === event.characterId,
-            );
-            return (
-              <li key={event.id}>
-                {actor ? (
-                  <button
-                    type="button"
-                    className="name-link"
-                    onClick={() => onSelect(actor.id)}
-                  >
-                    {shortenFeedSummary(event.summary)}
-                  </button>
-                ) : (
-                  shortenFeedSummary(event.summary)
-                )}
-              </li>
-            );
-          })}
+          {recap.highlights.slice(0, 4).map((event) => (
+            <li key={event.id}>
+              <LinkedSummary
+                text={event.summary}
+                characters={characters}
+                onSelect={onSelect}
+              />
+            </li>
+          ))}
         </ul>
       )}
     </section>

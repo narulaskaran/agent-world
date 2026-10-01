@@ -110,7 +110,7 @@ export function App() {
                   ? "Server unreachable"
                   : "Reconnecting"}
             </div>
-            <div className="viewer-count">
+            <div className="world-stats">
               {snapshot.characters.length}{" "}
               {snapshot.characters.length === 1 ? "resident" : "residents"}
               {snapshot.decisionScale !== 1

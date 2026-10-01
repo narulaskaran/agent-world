@@ -1,15 +1,19 @@
 import * as THREE from "three";
-import { WORLD_HEIGHT } from "@agent-world/shared/world";
+import {
+  WORLD_HEIGHT,
+  locationName,
+  type WorldLocationId,
+} from "@agent-world/shared/world";
 import { CAMERA_PITCH } from "./camera";
 import { TILE_TOP } from "./hex";
 
-const SIGN_SPOTS: Array<{ name: string; x: number; z: number }> = [
-  { name: "The Tiny Cup", x: 143, z: 171 },
-  { name: "The Memory Stack", x: 145, z: 653 },
-  { name: "Sunbeam Plaza", x: 572, z: 215 },
-  { name: "Mossbell Park", x: 875, z: 76 },
-  { name: "The Tinker Shed", x: 880, z: 445 },
-];
+const SIGN_SPOTS: Record<WorldLocationId, { x: number; z: number }> = {
+  cafe: { x: 143, z: 171 },
+  library: { x: 145, z: 653 },
+  plaza: { x: 572, z: 215 },
+  park: { x: 875, z: 76 },
+  workshop: { x: 880, z: 445 },
+};
 
 function std(color: number, extras?: THREE.MeshStandardMaterialParameters) {
   return new THREE.MeshStandardMaterial({
@@ -263,6 +267,13 @@ export function createLandmarks(parent: THREE.Object3D): {
   };
 }
 
-export function locationSignAnchors() {
-  return SIGN_SPOTS;
+export function locationSignAnchors(): Array<{
+  name: string;
+  x: number;
+  z: number;
+}> {
+  return Object.entries(SIGN_SPOTS).map(([id, spot]) => ({
+    name: locationName(id),
+    ...spot,
+  }));
 }

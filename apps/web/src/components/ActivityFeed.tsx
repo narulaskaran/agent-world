@@ -12,10 +12,9 @@ import {
   eventDetail,
   eventDetailsLabel,
   eventInvolves,
-  shortenFeedSummary,
-  summarySegments,
   threadEvents,
 } from "../public-record";
+import { LinkedSummary } from "./LinkedSummary";
 
 const EVENT_SYMBOLS: Partial<Record<WorldEvent["kind"], string>> = {
   conversation: "☵",
@@ -25,36 +24,6 @@ const EVENT_SYMBOLS: Partial<Record<WorldEvent["kind"], string>> = {
   artifact: "✎",
   owner: "✋",
 };
-
-function Summary({
-  text,
-  characters,
-  onSelect,
-}: {
-  text: string;
-  characters: PublicCharacter[];
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <>
-      {summarySegments(shortenFeedSummary(text), characters).map(
-        (segment, index) =>
-          segment.characterId ? (
-            <button
-              key={index}
-              type="button"
-              className="name-link"
-              onClick={() => onSelect(segment.characterId!)}
-            >
-              {segment.text}
-            </button>
-          ) : (
-            <span key={index}>{segment.text}</span>
-          ),
-      )}
-    </>
-  );
-}
 
 function EventRow({
   event,
@@ -72,7 +41,7 @@ function EventRow({
       <div className="event-copy">
         <div className="event-headline">
           <p title={event.summary}>
-            <Summary
+            <LinkedSummary
               text={event.summary}
               characters={characters}
               onSelect={onSelect}
@@ -128,7 +97,7 @@ function ConversationThread({
       <div className="event-copy">
         <div className="event-headline">
           <p>
-            <Summary
+            <LinkedSummary
               text={`${heading} ${finished ? "talked" : "are talking"}`}
               characters={characters}
               onSelect={onSelect}
