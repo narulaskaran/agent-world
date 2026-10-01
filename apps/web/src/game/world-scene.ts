@@ -48,9 +48,7 @@ import {
   createLandmarks,
   locationSignAnchors,
 } from "./landmarks";
-
-/** Matches the stylesheet breakpoint where the inspector becomes a bottom sheet. */
-const INSPECTOR_SHEET_QUERY = "(max-width: 900px)";
+import { COMPACT_LAYOUT_QUERY } from "../layout";
 
 interface CharacterNode {
   id: string;
@@ -680,7 +678,7 @@ export class WorldScene {
       const target = followTarget(pose.x, pose.z, this.distance, {
         aspect: this.host.clientWidth / Math.max(1, this.host.clientHeight),
         inspector: this.selectedId
-          ? matchMedia(INSPECTOR_SHEET_QUERY).matches
+          ? matchMedia(COMPACT_LAYOUT_QUERY).matches
             ? "bottom"
             : "left"
           : "none",
