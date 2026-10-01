@@ -8,6 +8,7 @@
       name="description"
       content="Clone Agent World, run pnpm start, and watch characters live on your machine. Optional OpenRouter or local wallet keys; runs free on a built-in brain with none."
     />
+    <meta name="theme-color" content="#f4eddb" />
     <meta property="og:title" content="Agent World" />
     <meta
       property="og:description"
@@ -24,79 +25,131 @@
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/src/style.css" />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
-    <header>
+    <header class="site-header">
       <div class="wrap bar">
-        <p class="brand">Agent World</p>
+        <a class="brand" href="#top" aria-label="Agent World, top of page">
+          <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+            <path
+              d="M16 2.5 27.7 9.25v13.5L16 29.5 4.3 22.75V9.25z"
+              fill="#7eab67"
+              stroke="#2d6a4f"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+            <circle cx="16" cy="14" r="3.2" fill="#f4eddb" />
+            <path
+              d="M10.5 22.2c.9-3 3-4.4 5.5-4.4s4.6 1.4 5.5 4.4"
+              fill="#f4eddb"
+            />
+          </svg>
+          <span>Agent World</span>
+        </a>
         <nav aria-label="Page">
+          <a href="#demo">See it run</a>
           <a href="#how">How it works</a>
           <a href="#keys">Keys</a>
           <a href="#quickstart">Quickstart</a>
-          <a href="https://github.com/narulaskaran/agent-world">GitHub</a>
+          <a class="nav-cta" href="https://github.com/narulaskaran/agent-world"
+            >GitHub</a
+          >
         </nav>
       </div>
     </header>
     <main id="main">
-      <section id="hero" class="hero" aria-labelledby="hero-title">
-        <div class="hero-canvas-wrap" id="hero-stage">
-          <canvas id="hero-canvas" aria-hidden="true"></canvas>
-          <div class="hero-fallback" hidden>A cream hillside of hex tiles.</div>
-        </div>
-        <div class="wrap hero-copy">
-          <h1 id="hero-title">A world that lives on your machine</h1>
-          <p class="pitch">
-            Clone the repo, run <code>pnpm start</code>, and watch characters
-            move, meet, talk, and remember — with your keys, or none at all.
-          </p>
-          <p class="actions">
-            <a class="button" href="https://github.com/narulaskaran/agent-world"
-              >Get it on GitHub</a
-            >
-            <a class="button ghost" href="#quickstart">Quickstart</a>
-          </p>
+      <section id="top" class="hero" aria-labelledby="hero-title">
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Local-first &middot; open source</p>
+            <h1 id="hero-title">
+              A tiny world that <em>lives</em> on your machine
+            </h1>
+            <p class="pitch">
+              Clone the repo, run <code>pnpm start</code>, and watch characters
+              move, meet, talk, and remember — with your keys, or none at all.
+            </p>
+            <p class="actions">
+              <a
+                class="button"
+                href="https://github.com/narulaskaran/agent-world"
+                >Get it on GitHub <span aria-hidden="true">&rarr;</span></a
+              >
+              <a class="button ghost" href="#quickstart">Quickstart</a>
+            </p>
+            <ul class="chips" aria-label="Highlights">
+              <li>No account</li>
+              <li>No hosted world</li>
+              <li>Free keyless brain</li>
+            </ul>
+          </div>
+          <div class="hero-stage" id="hero-stage">
+            <canvas id="hero-canvas" aria-hidden="true"></canvas>
+            <div class="hero-fallback" hidden>
+              A cream hillside of hex tiles.
+            </div>
+            <p class="stage-hint" aria-hidden="true">
+              Psst &mdash; click a character
+            </p>
+          </div>
         </div>
       </section>
 
-      <section id="demo" class="wrap" aria-labelledby="demo-title">
+      <section id="demo" class="wrap reveal" aria-labelledby="demo-title">
+        <p class="eyebrow">The real app</p>
         <h2 id="demo-title">See it run</h2>
         <div class="shots">
           <figure class="shot">
-            <img
-              src="/screens/world.webp"
-              width="1280"
-              height="800"
-              loading="lazy"
-              alt="Three characters chatting at Sunbeam Plaza on a hex-tile map, with an activity feed of conversations, memories and things left at the Tinker Shed."
-            />
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true">
+                <i></i><i></i><i></i><span>127.0.0.1:4310</span>
+              </div>
+              <img
+                src="/screens/world.webp"
+                width="1280"
+                height="800"
+                loading="lazy"
+                alt="Three characters chatting at Sunbeam Plaza on a hex-tile map, with an activity feed of conversations, memories and things left at the Tinker Shed."
+              />
+            </div>
             <figcaption>
-              Characters wander between five places, strike up conversations and
-              leave things at the Tinker Shed. The feed threads every
-              conversation as it happens.
+              <strong>The world.</strong> Characters wander between five places,
+              strike up conversations and leave things at the Tinker Shed. The
+              feed threads every conversation as it happens.
             </figcaption>
           </figure>
           <figure class="shot">
-            <img
-              src="/screens/inspector.webp"
-              width="1280"
-              height="800"
-              loading="lazy"
-              alt="The inspector for a character named Juniper, showing what she is doing, her personality and her friendships with Moss and Tinker."
-            />
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true">
+                <i></i><i></i><i></i><span>127.0.0.1:4310</span>
+              </div>
+              <img
+                src="/screens/inspector.webp"
+                width="1280"
+                height="800"
+                loading="lazy"
+                alt="The inspector for a character named Juniper, showing what she is doing, her personality and her friendships with Moss and Tinker."
+              />
+            </div>
             <figcaption>
-              Click anyone to follow them. The inspector shows what they are
-              thinking, who they know and what they remember, and lets you nudge
-              them with a directive.
+              <strong>The inspector.</strong> Click anyone to follow them. See
+              what they are thinking, who they know and what they remember, and
+              nudge them with a directive.
             </figcaption>
           </figure>
         </div>
       </section>
 
-      <section id="how" class="wrap" aria-labelledby="how-title">
+      <section id="how" class="wrap reveal" aria-labelledby="how-title">
+        <p class="eyebrow">Three steps</p>
         <h2 id="how-title">How it works</h2>
-        <ul class="cards">
+        <ol class="cards">
           <li>
+            <span class="num" aria-hidden="true">1</span>
             <h3>Create characters</h3>
             <p>
               Give each one a name and a personality, or start with a ready-made
@@ -105,6 +158,7 @@
             </p>
           </li>
           <li>
+            <span class="num" aria-hidden="true">2</span>
             <h3>They live on their own</h3>
             <p>
               Between your visits they keep moving, meeting, talking, and
@@ -113,6 +167,7 @@
             </p>
           </li>
           <li>
+            <span class="num" aria-hidden="true">3</span>
             <h3>You steer</h3>
             <p>
               Send directives, change the world speed, pause the simulation, and
@@ -120,35 +175,76 @@
               on your machine.
             </p>
           </li>
+        </ol>
+      </section>
+
+      <section id="keys" class="wrap reveal" aria-labelledby="keys-title">
+        <p class="eyebrow">Optional, always</p>
+        <h2 id="keys-title">Bring your own keys</h2>
+        <p class="lede">
+          Spend is capped by per-character and server-wide daily budgets
+          (default server cap $2). Pick how smart you want the world to be.
+        </p>
+        <ul class="tiers">
+          <li>
+            <h3>No keys</h3>
+            <p class="tier-tag">Free &middot; offline</p>
+            <p>
+              Characters run on a built-in keyless brain. It never touches the
+              cost ledger, and it is still chatty.
+            </p>
+          </li>
+          <li class="featured">
+            <h3>OpenRouter</h3>
+            <p class="tier-tag"><code>OPENROUTER_API_KEY</code></p>
+            <p>
+              One key powers dialogue, memories, and JEV decisions. JEV uses
+              OpenRouter’s alpha Decisions API and falls back to the keyless
+              brain if it fails.
+            </p>
+          </li>
+          <li>
+            <h3>Local wallet</h3>
+            <p class="tier-tag"><code>pnpm wallet:setup</code></p>
+            <p>
+              A local <code>mppx</code> wallet pays per call for web search,
+              avatars, and LLM dialogue when no OpenRouter key is set.
+            </p>
+          </li>
         </ul>
       </section>
 
-      <section id="keys" class="wrap" aria-labelledby="keys-title">
-        <h2 id="keys-title">Bring your own keys</h2>
-        <p>
-          One optional <code>OPENROUTER_API_KEY</code> powers dialogue,
-          memories, and JEV decisions (JEV uses OpenRouter’s alpha Decisions API
-          and falls back if it fails). Or run <code>pnpm wallet:setup</code> for
-          a local <code>mppx</code> wallet that pays per call for web search,
-          avatars, and LLM dialogue when no OpenRouter key is set. Spend is
-          capped by per-character and server-wide daily budgets (default server
-          cap $2). With no keys at all, characters run on a built-in keyless
-          brain — free, offline, and still chatty.
-        </p>
-      </section>
-
-      <section id="quickstart" class="wrap" aria-labelledby="quickstart-title">
+      <section
+        id="quickstart"
+        class="wrap reveal"
+        aria-labelledby="quickstart-title"
+      >
+        <p class="eyebrow">Under a minute</p>
         <h2 id="quickstart-title">Quickstart</h2>
-        <p>Needs Node 24 and pnpm 10.</p>
-        <pre><code>git clone https://github.com/narulaskaran/agent-world
+        <p class="lede">Needs Node 24 and pnpm 10.</p>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span aria-hidden="true"><i></i><i></i><i></i></span>
+            <button type="button" class="copy" data-copy="#quickstart-code">
+              Copy
+            </button>
+            <span
+              class="sr-only"
+              role="status"
+              aria-live="polite"
+              id="copy-status"
+            ></span>
+          </div>
+          <pre><code id="quickstart-code">git clone https://github.com/narulaskaran/agent-world
 cd agent-world
 pnpm install
 cp .env.example .env   # optional: add keys
 pnpm start             # http://127.0.0.1:4310</code></pre>
+        </div>
       </section>
     </main>
     <footer>
-      <div class="wrap">
+      <div class="wrap foot">
         <p>
           Agent World is local-first. The interactive world is the app you run
           with <code>pnpm start</code>. This page is static marketing only — no
