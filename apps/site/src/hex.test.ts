@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cellNoise,
   dioramaHexes,
   hexDisk,
   hexToWorld,
@@ -18,6 +19,15 @@ describe("hex layout", () => {
     const keys = new Set(cells.map((cell) => `${cell.q},${cell.r}`));
     expect(keys.size).toBe(cells.length);
     expect(terrainKindAt(0, 0)).toBe("plaza");
+  });
+
+  it("keeps the pond off the plaza ring and decor noise stable", () => {
+    const ponds = dioramaHexes(4).filter((cell) => cell.kind === "pond");
+    expect(ponds.length).toBeGreaterThan(0);
+    expect(terrainKindAt(1, 0)).toBe("path");
+    expect(cellNoise(2, -1, 3)).toBe(cellNoise(2, -1, 3));
+    expect(cellNoise(2, -1, 3)).toBeGreaterThanOrEqual(0);
+    expect(cellNoise(2, -1, 3)).toBeLessThan(1);
   });
 
   it("treats reduced-motion media as a static preference", () => {
