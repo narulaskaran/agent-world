@@ -17,7 +17,7 @@
     "@fastify/static": "^10.1.5",
     "@fastify/websocket": "^11.3.1",
     "fastify": "^5.12.5",
-    "tsx": "^4.20.5"
+    "tsx": "^4.23.15"
   },
   "optionalDependencies": {
     "mppx": "0.10.1"
