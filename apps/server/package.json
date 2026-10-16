@@ -20,7 +20,7 @@
     "tsx": "^4.23.15"
   },
   "optionalDependencies": {
-    "mppx": "0.10.1"
+    "mppx": "0.13.4"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
