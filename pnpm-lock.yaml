@@ -124,8 +124,8 @@ importers:
         specifier: ^13.0.3
         version: 13.0.3
       drizzle-orm:
-        specifier: ^0.45.3
-        version: 0.45.3(@neondatabase/serverless@1.1.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3)(kysely@0.29.5)(pg@8.23.0)
+        specifier: ^0.45.4
+        version: 0.45.4(@neondatabase/serverless@1.1.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3)(kysely@0.29.5)(pg@8.23.0)
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -667,8 +667,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  drizzle-orm@0.45.3:
-    resolution: {integrity: sha512-CAloER21cDdcgZ1OmjrZX82EeRNsdP+y0onX/eyoYDaYzki/adrAa91lzM5jWh7zZPK4qUbw/6LGv9J+A+uizA==}
+  drizzle-orm@0.45.4:
+    resolution: {integrity: sha512-NiM1YZpJ2UxyeE67DpDDZ+Tsw4YLX3trSlkNT7Tm9eKoUNb1LvaAaQzXgYQsWs+AQ9TUmmwMmBOCXuqqxUWKKQ==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
       '@cloudflare/workers-types': '>=4'
@@ -1834,7 +1834,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  drizzle-orm@0.45.3(@neondatabase/serverless@1.1.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3)(kysely@0.29.5)(pg@8.23.0):
+  drizzle-orm@0.45.4(@neondatabase/serverless@1.1.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.3)(kysely@0.29.5)(pg@8.23.0):
     optionalDependencies:
       '@neondatabase/serverless': 1.1.0
       '@types/better-sqlite3': 7.6.13
